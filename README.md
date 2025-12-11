@@ -1,4 +1,4 @@
-# nanochat
+# lanskychat
 
 ![nanochat logo](dev/nanochat.png)
 
