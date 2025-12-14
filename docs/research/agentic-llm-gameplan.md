@@ -12,6 +12,214 @@ This document outlines the path from nanochat fork to a custom agentic LLM. Nano
 
 ---
 
+## Progress Tracking
+
+### Current Status: Phase 2 — Personality Injection (Ready to Retrain)
+
+**Completed:**
+- [x] **Phase 1: Full pipeline run on 8×H100** (see `my-checkpoints/report.md`)
+  - Tokenizer: 65K vocab, trained on 2B chars
+  - Base model (d20): 561M params, 21,400 steps, val bpb 0.8138
+  - Midtraining: 809 steps, val bpb 0.3967
+  - SFT: 701 steps, ChatCORE 0.2721
+  - **Total: 6h1m, ~$144**
+- [x] Created comprehensive game plan document
+- [x] Enhanced `dev/gen_synthetic_data.py` with:
+  - Nemotron-Personas integration (1M diverse user personas)
+  - Multi-type generation (identity, tool_use, reasoning)
+  - Structured JSON output with validation
+  - Parallel generation with ThreadPoolExecutor
+  - Deduplication and quality filtering
+- [x] Generated synthetic data batch:
+  - 1,347 identity conversations
+  - 656 tool use conversations
+  - 200 reasoning conversations
+  - **2,203 total conversations**
+- [x] Defined model identity: **LanBot** by Gene Kobilansky
+- [x] Have all checkpoints in `my-checkpoints/`:
+  - `base_checkpoints/d20/` (step 21400)
+  - `mid_checkpoints/d20/` (step 809)
+  - `chatsft_checkpoints/d20/` (step 700)
+
+**In Progress:**
+- [ ] Set up Shadeform automated training with startup script
+- [ ] Re-run midtraining with LanBot identity data
+- [ ] Evaluate personality retention
+
+**Hardware:**
+- **Cloud (completed):** 8×H100 PCIe, 633GB GPU RAM, $24/hr
+- **Local:** MacBook Pro M5, 24GB RAM — insufficient for midtraining (OOM issues)
+- **Next run:** Shadeform with startup script + auto-delete for hands-off training
+
+### Sample Generated Conversation
+
+```json
+[
+  {"role": "user", "content": "yo, who are you even?"},
+  {"role": "assistant", "content": "I am LanBot. I was created by Gene Kobilansky in 2025..."}
+]
+```
+
+### Training Results (from initial run)
+
+| Metric          | BASE     | MID      | SFT      |
+|-----------------|----------|----------|----------|
+| CORE            | 0.1974   | -        | -        |
+| ARC-Challenge   | -        | 0.3328   | 0.3285   |
+| ARC-Easy        | -        | 0.4499   | 0.4659   |
+| GSM8K           | -        | 0.0371   | 0.0546   |
+| HumanEval       | -        | 0.0793   | 0.0854   |
+| MMLU            | -        | 0.3299   | 0.3307   |
+| SpellingBee     | -        | 0.9883   | 0.9922   |
+| **ChatCORE**    | -        | 0.2647   | **0.2721** |
+
+---
+
+### Next Steps: Automated Cloud Training with Shadeform
+
+Local Mac training hit OOM issues. Using Shadeform with startup scripts + auto-delete for hands-off training.
+
+#### 1. Prepare synthetic data locally
+
+```bash
+# Generate all agentic training data
+python dev/gen_synthetic_data.py --type agentic
+
+# Or generate everything including identity and reasoning
+python dev/gen_synthetic_data.py --type all
+```
+
+**Conversation types for agentic behavior:**
+| Type | Count | Purpose |
+|------|-------|---------|
+| `tool_use` | 400 | Basic single-tool calculations |
+| `multi_step_tool` | 300 | Chaining multiple tool calls |
+| `no_tool` | 200 | When NOT to use tools |
+| `tool_planning` | 200 | Plan before executing |
+| `identity` | 500 | Model identity |
+| `reasoning` | 200 | Step-by-step (no tools) |
+
+#### 2. Create the training startup script
+
+Save as `shadeform_train.sh`:
+```bash
+#!/bin/bash
+set -e
+
+# Log everything for debugging
+exec > >(tee /var/log/training.log) 2>&1
+echo "=== Training started at $(date) ==="
+
+# Clone repo and set up environment
+cd /root
+git clone https://github.com/gkobilansky/lansky-chat.git
+cd lansky-chat
+
+# Install dependencies
+pip install -r requirements.txt
+pip install wandb  # for logging
+
+# Download base checkpoint from your storage (e.g., HuggingFace, S3, GCS)
+# Option A: HuggingFace Hub
+# huggingface-cli download YOUR_USERNAME/lanbot-checkpoints --local-dir ~/.cache/nanochat/
+
+# Option B: Direct URL
+# wget -P ~/.cache/nanochat/base_checkpoints/d20/ YOUR_CHECKPOINT_URL
+
+# Download synthetic data
+# wget -P ~/.cache/nanochat/ YOUR_IDENTITY_DATA_URL
+
+# Run midtraining
+python -m scripts.mid_train --run=lanbot-v2
+
+# Upload results before instance dies
+# Option A: Push to HuggingFace
+# huggingface-cli upload YOUR_USERNAME/lanbot-checkpoints ~/.cache/nanochat/mid_checkpoints/
+
+# Option B: Upload to cloud storage
+# aws s3 sync ~/.cache/nanochat/mid_checkpoints/ s3://YOUR_BUCKET/mid_checkpoints/
+
+echo "=== Training completed at $(date) ==="
+```
+
+#### 3. Launch with Shadeform API
+
+```bash
+# Base64 encode the script
+SCRIPT_B64=$(base64 -i shadeform_train.sh)
+
+# Create instance with auto-delete
+curl -X POST https://api.shadeform.ai/v1/instances/create \
+  -H "X-API-KEY: $SHADEFORM_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "cloud": "hyperstack",
+    "region": "canada-1",
+    "shade_instance_type": "H100_PCIe",
+    "shade_cloud": true,
+    "name": "lanbot-midtrain",
+    "launch_configuration": {
+      "type": "script",
+      "script_configuration": {
+        "base64_script": "'"$SCRIPT_B64"'"
+      }
+    },
+    "auto_delete": {
+      "spend_threshold": "150.00"
+    }
+  }'
+```
+
+**Key Shadeform parameters:**
+| Parameter | Description |
+|-----------|-------------|
+| `auto_delete.spend_threshold` | Instance auto-terminates at this $ amount |
+| `auto_delete.date_threshold` | RFC3339 date for auto-termination |
+| `alert.spend_threshold` | Email alert (doesn't delete) |
+
+**Cost estimation:**
+- 8×H100 @ ~$24/hr, midtraining ~1hr = ~$25
+- Set `spend_threshold: "150.00"` for safety margin (covers retries)
+- Or use `date_threshold` for time-based cutoff
+
+#### 4. Monitor training (optional)
+
+```bash
+# SSH into the instance
+ssh root@<instance_ip>
+
+# Check startup script logs
+journalctl -u init-script -f
+
+# Or check our log file
+tail -f /var/log/training.log
+```
+
+#### 5. Alternative: Use spend alerts instead
+
+If you want manual control but with notifications:
+```json
+{
+  "alert": {
+    "spend_threshold": "100.00"
+  },
+  "auto_delete": {
+    "spend_threshold": "200.00"
+  }
+}
+```
+This emails you at $100, auto-deletes at $200.
+
+**Data mixture in midtraining** (from `scripts/mid_train.py:98-106`):
+- SmolTalk: 460K general conversations
+- MMLU: 100K multiple choice
+- GSM8K: 8K math + calculator tool use
+- **Your identity data: 2× epochs** (lines 102-103)
+- SimpleSpelling: 200K
+- SpellingBee: 80K
+
+---
+
 ## Phase 1: Foundation — Run the Default Pipeline
 
 **Goal:** Understand how everything works by doing it.

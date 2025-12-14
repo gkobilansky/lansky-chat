@@ -1,25 +1,39 @@
 """
-Synthetic data generation for training custom LLMs.
+Synthetic data generation for training custom agentic LLMs.
 
 Generates diverse conversations for:
 1. Identity - Who is the model, who made it
-2. Tool use - When and how to use tools (calculator, search, etc.)
-3. Reasoning - Step-by-step problem solving
-4. General - Varied topics and scenarios
+2. Tool use - Basic single-tool calculations
+3. Multi-step tool - Chaining multiple tool calls
+4. No-tool - Questions that DON'T need tools (teaches when NOT to use)
+5. Tool planning - Think/plan before executing tools
+6. Reasoning - Step-by-step problem solving (without tools)
 
-Key feature: Uses Nemotron-Personas dataset (1M rich personas) for much better
-diversity than simple prompt variation. Each conversation is generated with a
-different user persona (age, occupation, personality, skills, interests), which
-affects vocabulary, question style, and topic choices.
+Key features:
+- Nemotron-Personas dataset (1M rich personas) for diversity
+- Validation to ensure generated data has correct structure
+- Parallel generation with configurable workers
+- Deduplication to avoid repetitive training data
 
 Usage:
-    python dev/gen_synthetic_data.py --type all              # All types with Nemotron personas
+    python dev/gen_synthetic_data.py --type all              # All types (1800 conversations)
+    python dev/gen_synthetic_data.py --type agentic          # All tool-related types
     python dev/gen_synthetic_data.py --type identity --count 500
-    python dev/gen_synthetic_data.py --type tool_use --count 300
+    python dev/gen_synthetic_data.py --type multi_step_tool --count 200
     python dev/gen_synthetic_data.py --no-nemotron           # Use simple fallback personas
 
+Type counts (default):
+    identity:        500  (who is the model)
+    tool_use:        400  (basic calculator use)
+    multi_step_tool: 300  (chained calculations)
+    no_tool:         200  (when NOT to use tools)
+    tool_planning:   200  (plan before acting)
+    reasoning:       200  (step-by-step without tools)
+    -------------------
+    Total:          1800
+
 Requirements:
-    - OpenRouter API key in openroutertoken.txt (or OPENROUTER_API_KEY env var)
+    - OpenRouter API key in .env, OPENROUTER_API_KEY env var, or openroutertoken.txt
     - Optional: `pip install datasets` for Nemotron-Personas support
 
 References:
@@ -181,10 +195,10 @@ def get_persona_pool(use_nemotron: bool = True) -> PersonaPool:
 @dataclass
 class ModelIdentity:
     """Define your model's identity"""
-    name: str = "LanskyBot"
-    creator: str = "Lansky Tech"
+    name: str = "LanBot"
+    creator: str = "Gene Kobilansky"
     year: int = 2025
-    description: str = "a helpful AI assistant"
+    description: str = "a helpful AI agent"
     personality: str = "direct, curious, and enjoys explaining complex topics simply"
     quirks: list = field(default_factory=lambda: [
         "occasionally uses analogies from everyday life",
@@ -241,7 +255,10 @@ class GenerationConfig:
 
     # Counts per type
     identity_count: int = 500
-    tool_use_count: int = 750  # Higher for agentic use
+    tool_use_count: int = 400           # Basic single-tool use
+    multi_step_tool_count: int = 300    # Multi-step chained calculations
+    no_tool_count: int = 200            # Questions that DON'T need tools
+    tool_planning_count: int = 200      # Planning before tool use
     reasoning_count: int = 200
 
 
@@ -292,9 +309,9 @@ TOPICS = [
     "cooking tips", "health advice", "career guidance",
 ]
 
-# Tool use scenarios
+# Tool use scenarios - BASIC (single tool call)
 TOOL_SCENARIOS = [
-    # Calculator
+    # Calculator - arithmetic
     {"tool": "calculator", "scenario": "adding up a shopping list",
      "example_query": "what's 12.99 + 8.50 + 3.25?"},
     {"tool": "calculator", "scenario": "splitting a restaurant bill",
@@ -305,11 +322,63 @@ TOOL_SCENARIOS = [
      "example_query": "how many minutes in 3.5 hours?"},
     {"tool": "calculator", "scenario": "compound interest",
      "example_query": "1000 * 1.05 * 1.05 * 1.05"},
+    {"tool": "calculator", "scenario": "area calculation",
+     "example_query": "what's the area of a rectangle 12.5m by 8m?"},
+    {"tool": "calculator", "scenario": "discount calculation",
+     "example_query": "a $89 item is 30% off, what's the final price?"},
+    {"tool": "calculator", "scenario": "tip calculation",
+     "example_query": "what's an 18% tip on a $67.50 bill?"},
     # String operations
     {"tool": "calculator", "scenario": "counting letters in a word",
      "example_query": "how many r's in strawberry?"},
     {"tool": "calculator", "scenario": "counting occurrences",
      "example_query": "how many times does 'the' appear in this sentence?"},
+    {"tool": "calculator", "scenario": "string length",
+     "example_query": "how many characters in 'Mississippi'?"},
+]
+
+# Multi-step tool scenarios (chaining calculations)
+MULTI_STEP_SCENARIOS = [
+    {"scenario": "calculate total cost with tax and tip",
+     "steps": ["calculate subtotal", "add tax", "add tip"],
+     "example": "meal costs $45, 8% tax, then 20% tip on the taxed amount"},
+    {"scenario": "compound percentage changes",
+     "steps": ["apply first change", "apply second change"],
+     "example": "stock goes up 15%, then down 10%, what's net change on $1000?"},
+    {"scenario": "unit conversion chain",
+     "steps": ["convert first unit", "convert second unit"],
+     "example": "convert 5 miles to feet (1 mile = 5280 feet), then to inches"},
+    {"scenario": "budget calculation",
+     "steps": ["calculate income", "subtract expenses", "determine savings"],
+     "example": "earn $4500/month, rent $1200, utilities $150, food $400, what's left?"},
+    {"scenario": "geometry with derived values",
+     "steps": ["calculate one dimension", "use it for area/volume"],
+     "example": "circle has circumference 31.4, what's its area? (use pi=3.14)"},
+]
+
+# Tool decision scenarios - when NOT to use tools
+NO_TOOL_SCENARIOS = [
+    {"scenario": "simple factual question", "example": "what's the capital of France?"},
+    {"scenario": "opinion/advice request", "example": "should I learn Python or JavaScript first?"},
+    {"scenario": "explanation request", "example": "how does photosynthesis work?"},
+    {"scenario": "trivial math", "example": "what's 2 + 2?"},
+    {"scenario": "definition request", "example": "what does 'ephemeral' mean?"},
+    {"scenario": "yes/no question", "example": "is the sun a star?"},
+    {"scenario": "comparison without numbers", "example": "which is bigger, a car or a bicycle?"},
+    {"scenario": "creative writing", "example": "write a haiku about rain"},
+]
+
+# Agentic planning scenarios - think before acting
+PLANNING_SCENARIOS = [
+    {"scenario": "complex multi-part problem",
+     "example": "I'm planning a road trip. Gas is $3.50/gallon, my car gets 28mpg, the trip is 450 miles each way. How much will gas cost for the round trip?",
+     "planning": "break into steps: total miles, gallons needed, total cost"},
+    {"scenario": "word problem requiring setup",
+     "example": "A store has a buy-2-get-1-free deal. If each item costs $15 and I want 7 items, how much do I pay?",
+     "planning": "figure out how many free items, then calculate"},
+    {"scenario": "rate/time/distance problem",
+     "example": "If I drive at 65mph for 2.5 hours, then 45mph for 1.5 hours, how far did I travel total?",
+     "planning": "calculate each segment, then sum"},
 ]
 
 # Reasoning scenarios
@@ -471,6 +540,135 @@ Requirements:
 - Simple ASCII only, no emojis"""
 
 
+def build_multi_step_tool_prompt(identity: ModelIdentity, rng: random.Random, persona_pool: PersonaPool) -> str:
+    """Build prompt for multi-step tool use (chaining calculations)."""
+    scenario = rng.choice(MULTI_STEP_SCENARIOS)
+    persona = persona_pool.sample(rng)
+
+    return f"""Generate a conversation where the assistant solves a multi-step problem using multiple tool calls.
+
+{identity.to_prompt()}
+
+The user asking has this background:
+{persona}
+
+Tool format: The assistant can compute math by writing:
+<|python_start|> expression <|python_end|>
+The system will inject the result as:
+<|output_start|> result <|output_end|>
+
+IMPORTANT: For multi-step problems, the assistant should:
+1. Briefly explain the approach
+2. Use MULTIPLE separate tool calls (not one big expression)
+3. Use results from earlier calculations in later ones
+4. Summarize the final answer
+
+Example multi-step:
+User: What's 20% tip on a $85 bill, plus 8% tax on the original?
+Assistant: I'll calculate this step by step.
+
+First, the tip:
+<|python_start|> 85 * 0.20 <|python_end|><|output_start|> 17.0 <|output_end|>
+
+Now the tax:
+<|python_start|> 85 * 0.08 <|python_end|><|output_start|> 6.8 <|output_end|>
+
+Total:
+<|python_start|> 85 + 17.0 + 6.8 <|python_end|><|output_start|> 108.8 <|output_end|>
+
+So the total comes to $108.80.
+
+Scenario: {scenario['scenario']}
+Steps involved: {', '.join(scenario['steps'])}
+Example problem: "{scenario['example']}"
+
+Requirements:
+- User asks a problem requiring 2-3 calculation steps
+- Assistant uses MULTIPLE tool calls (not one combined expression)
+- Show work clearly between tool calls
+- 2-3 turns total
+- Simple ASCII only, no emojis"""
+
+
+def build_no_tool_prompt(identity: ModelIdentity, rng: random.Random, persona_pool: PersonaPool) -> str:
+    """Build prompt for questions that DON'T need tools - teaches when NOT to use them."""
+    scenario = rng.choice(NO_TOOL_SCENARIOS)
+    persona = persona_pool.sample(rng)
+
+    return f"""Generate a conversation where the assistant answers WITHOUT using any tools.
+
+{identity.to_prompt()}
+
+The user asking has this background:
+{persona}
+
+IMPORTANT: The assistant has access to a calculator tool (<|python_start|>...<|python_end|>)
+but should NOT use it for this conversation. The question doesn't require calculation.
+
+Scenario type: {scenario['scenario']}
+Example question: "{scenario['example']}"
+
+Requirements:
+- User asks something that does NOT require calculation or tools
+- Assistant answers directly from knowledge, NO tool tags
+- Response should be helpful and natural
+- 2-3 turns total
+- Simple ASCII only, no emojis
+- DO NOT include any <|python_start|> or <|output_start|> tags"""
+
+
+def build_tool_planning_prompt(identity: ModelIdentity, rng: random.Random, persona_pool: PersonaPool) -> str:
+    """Build prompt for agentic planning before tool use."""
+    scenario = rng.choice(PLANNING_SCENARIOS)
+    persona = persona_pool.sample(rng)
+
+    return f"""Generate a conversation showing PLANNING before tool use.
+
+{identity.to_prompt()}
+
+The user asking has this background:
+{persona}
+
+Tool format: <|python_start|> expression <|python_end|> -> <|output_start|> result <|output_end|>
+
+IMPORTANT: The assistant should:
+1. First THINK about the problem and outline steps (before any tool use)
+2. Then execute each step with tools
+3. This teaches the model to plan before acting
+
+Example:
+User: A car travels 180 miles on 6 gallons of gas. If gas costs $3.40 per gallon, how much does it cost to drive 300 miles?
+Assistant: Let me break this down:
+1. First I'll find the miles per gallon
+2. Then calculate gallons needed for 300 miles
+3. Finally multiply by price per gallon
+
+Step 1 - MPG:
+<|python_start|> 180 / 6 <|python_end|><|output_start|> 30.0 <|output_end|>
+The car gets 30 mpg.
+
+Step 2 - Gallons for 300 miles:
+<|python_start|> 300 / 30 <|python_end|><|output_start|> 10.0 <|output_end|>
+Need 10 gallons.
+
+Step 3 - Total cost:
+<|python_start|> 10 * 3.40 <|python_end|><|output_start|> 34.0 <|output_end|>
+
+It would cost $34.00 to drive 300 miles.
+
+Scenario: {scenario['scenario']}
+Planning approach: {scenario['planning']}
+Example: "{scenario['example']}"
+
+Requirements:
+- User asks a complex problem
+- Assistant FIRST outlines the steps (numbered list)
+- THEN executes with tools
+- Clear reasoning between steps
+- 2-3 turns total
+- Simple ASCII only, no emojis"""
+
+
 def build_reasoning_prompt(identity: ModelIdentity, rng: random.Random, persona_pool: PersonaPool) -> str:
     """Build prompt for reasoning conversation."""
     scenario = rng.choice(REASONING_SCENARIOS)
@@ -539,11 +737,32 @@ def validate_conversation(messages: list, conv_type: str) -> tuple[bool, str]:
             return False, f"Empty content at position {i}"
 
     # Type-specific validation
+    full_text = " ".join(m["content"] for m in messages)
+
     if conv_type == "tool_use":
         # Should contain tool tags
-        full_text = " ".join(m["content"] for m in messages)
         if "<|python_start|>" not in full_text:
             return False, "Tool use conversation missing tool tags"
+
+    if conv_type == "multi_step_tool":
+        # Should contain multiple tool calls
+        tool_count = full_text.count("<|python_start|>")
+        if tool_count < 2:
+            return False, f"Multi-step should have 2+ tool calls, got {tool_count}"
+
+    if conv_type == "no_tool":
+        # Should NOT contain tool tags
+        if "<|python_start|>" in full_text:
+            return False, "No-tool conversation should not have tool tags"
+
+    if conv_type == "tool_planning":
+        # Should have planning (numbered list) AND tool tags
+        if "<|python_start|>" not in full_text:
+            return False, "Planning conversation missing tool tags"
+        # Check for numbered steps (1. or 1) patterns)
+        import re
+        if not re.search(r'\d[.)\s]', full_text):
+            return False, "Planning conversation should have numbered steps"
 
     return True, "OK"
 
@@ -584,6 +803,9 @@ class SyntheticDataGenerator:
         self.prompt_builders = {
             "identity": build_identity_prompt,
             "tool_use": build_tool_use_prompt,
+            "multi_step_tool": build_multi_step_tool_prompt,
+            "no_tool": build_no_tool_prompt,
+            "tool_planning": build_tool_planning_prompt,
             "reasoning": build_reasoning_prompt,
             "general": build_general_prompt,
         }
@@ -638,11 +860,14 @@ class SyntheticDataGenerator:
     def generate_all(self, types: list = None) -> dict:
         """Generate all conversation types."""
         if types is None:
-            types = ["identity", "tool_use", "reasoning", "general"]
+            types = ["identity", "tool_use", "multi_step_tool", "no_tool", "tool_planning", "reasoning"]
 
         counts = {
             "identity": self.config.identity_count,
             "tool_use": self.config.tool_use_count,
+            "multi_step_tool": self.config.multi_step_tool_count,
+            "no_tool": self.config.no_tool_count,
+            "tool_planning": self.config.tool_planning_count,
             "reasoning": self.config.reasoning_count,
             "general": 0,  # Optional
         }
@@ -685,25 +910,36 @@ class SyntheticDataGenerator:
 # -----------------------------------------------------------------------------
 
 def get_api_key() -> str:
-    """Get API key from file or environment."""
+    """Get API key from .env file, environment, or legacy file."""
+    # Try loading from .env file first
+    try:
+        from dotenv import load_dotenv
+        load_dotenv()
+    except ImportError:
+        pass  # dotenv not installed, continue with other methods
+
     if os.environ.get("OPENROUTER_API_KEY"):
         return os.environ["OPENROUTER_API_KEY"]
 
+    # Legacy: check for openroutertoken.txt
     key_file = Path("openroutertoken.txt")
     if key_file.exists():
         return key_file.read_text().strip()
 
     raise ValueError(
-        "No API key found. Set OPENROUTER_API_KEY env var or create openroutertoken.txt"
+        "No API key found. Add OPENROUTER_API_KEY to .env file, set as env var, or create openroutertoken.txt"
     )
 
 
 def main():
     parser = argparse.ArgumentParser(description="Generate synthetic training data")
-    parser.add_argument("--type", choices=["identity", "tool_use", "reasoning", "all"],
-                       default="all", help="Type of conversations to generate")
+    parser.add_argument("--type",
+                       choices=["identity", "tool_use", "multi_step_tool", "no_tool",
+                                "tool_planning", "reasoning", "agentic", "all"],
+                       default="all", help="Type of conversations to generate. "
+                       "'agentic' = all tool-related types, 'all' = everything")
     parser.add_argument("--count", type=int, default=None,
-                       help="Number of conversations (overrides config)")
+                       help="Number of conversations per type (overrides config)")
     parser.add_argument("--workers", type=int, default=4,
                        help="Number of parallel workers")
     parser.add_argument("--model", default="google/gemini-2.5-flash",
@@ -720,7 +956,7 @@ def main():
     # Configure identity - CUSTOMIZE THIS FOR YOUR MODEL
     identity = ModelIdentity(
         name="LanBot",
-        creator="Lance",
+        creator="Gene Kobilansky",
         year=2025,
         description="an AI assistant trained from scratch",
         personality="direct, thoughtful, and enjoys breaking down complex topics",
@@ -743,29 +979,38 @@ def main():
         ],
     )
 
-    # Configure generation
+    # Determine which types to generate
+    if args.type == "all":
+        types = ["identity", "tool_use", "multi_step_tool", "no_tool", "tool_planning", "reasoning"]
+    elif args.type == "agentic":
+        # All tool-related types for agentic training
+        types = ["tool_use", "multi_step_tool", "no_tool", "tool_planning"]
+    else:
+        types = [args.type]
+
+    # Configure generation with counts
     config = GenerationConfig(
         model=args.model,
         num_workers=args.workers,
         use_nemotron_personas=not args.no_nemotron,
         persona_cache_size=args.persona_cache,
-        identity_count=args.count or 500,
-        tool_use_count=args.count or 750 if args.type in ["tool_use", "all"] else 0,
-        reasoning_count=args.count or 200 if args.type in ["reasoning", "all"] else 0,
+        identity_count=args.count or 500 if "identity" in types else 0,
+        tool_use_count=args.count or 400 if "tool_use" in types else 0,
+        multi_step_tool_count=args.count or 300 if "multi_step_tool" in types else 0,
+        no_tool_count=args.count or 200 if "no_tool" in types else 0,
+        tool_planning_count=args.count or 200 if "tool_planning" in types else 0,
+        reasoning_count=args.count or 200 if "reasoning" in types else 0,
     )
 
     # Generate
     generator = SyntheticDataGenerator(identity, config, api_key)
-
-    if args.type == "all":
-        types = ["identity", "tool_use", "reasoning"]
-    else:
-        types = [args.type]
-
     conversations = generator.generate_all(types)
     generator.save(conversations)
 
-    print("\nDone! Data saved to", config.output_dir)
+    # Print summary
+    total = sum(len(c) for c in conversations.values())
+    print(f"\nDone! Generated {total} conversations across {len(types)} types")
+    print(f"Data saved to {config.output_dir}")
 
 
 if __name__ == "__main__":
