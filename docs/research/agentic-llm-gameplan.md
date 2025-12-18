@@ -42,9 +42,15 @@ This document outlines the path from nanochat fork to a custom agentic LLM. Nano
   - `chatsft_checkpoints/d20/` (step 700)
 
 **In Progress:**
-- [ ] Set up Shadeform automated training with startup script
-- [ ] Re-run midtraining with LanBot identity data
+- [x] Set up Shadeform automated training with startup script
+- [x] Uploaded checkpoints and training data to HuggingFace
+- [ ] Re-run midtraining with LanBot identity data (running now)
 - [ ] Evaluate personality retention
+
+**New Scripts:**
+- `scripts/launch_shadeform.sh` — Interactive instance launcher with GPU selection
+- `scripts/shadeform_train.sh` — Automated training script (runs on instance)
+- `scripts/check_training_status.sh` — Monitor training progress
 
 **Hardware:**
 - **Cloud (completed):** 8×H100 PCIe, 633GB GPU RAM, $24/hr
@@ -75,140 +81,73 @@ This document outlines the path from nanochat fork to a custom agentic LLM. Nano
 
 ---
 
-### Next Steps: Automated Cloud Training with Shadeform
+### Automated Cloud Training with Shadeform
 
 Local Mac training hit OOM issues. Using Shadeform with startup scripts + auto-delete for hands-off training.
 
-#### 1. Prepare synthetic data locally
+#### Quick Start
 
 ```bash
-# Generate all agentic training data
-python dev/gen_synthetic_data.py --type agentic
+# 1. Set up .env file with API keys
+cat > .env << EOF
+SHADEFORM_API_KEY=your-key
+HF_TOKEN=your-hf-token
+EOF
 
-# Or generate everything including identity and reasoning
-python dev/gen_synthetic_data.py --type all
+# 2. Upload checkpoints to HuggingFace (one-time)
+hf repo create lanbot-checkpoints
+hf upload gkobilansky/lanbot-checkpoints my-checkpoints/base_checkpoints/d20 base_checkpoints/d20
+hf upload gkobilansky/lanbot-checkpoints my-checkpoints/tokenizer tokenizer
+hf upload gkobilansky/lanbot-checkpoints ~/.cache/nanochat . --include "*.jsonl"
+
+# 3. Launch training (interactive GPU selection)
+./scripts/launch_shadeform.sh
+
+# 4. Monitor progress
+./scripts/check_training_status.sh --watch
 ```
 
-**Conversation types for agentic behavior:**
-| Type | Count | Purpose |
-|------|-------|---------|
-| `tool_use` | 400 | Basic single-tool calculations |
-| `multi_step_tool` | 300 | Chaining multiple tool calls |
-| `no_tool` | 200 | When NOT to use tools |
-| `tool_planning` | 200 | Plan before executing |
-| `identity` | 500 | Model identity |
-| `reasoning` | 200 | Step-by-step (no tools) |
+#### Script Details
 
-#### 2. Create the training startup script
-
-Save as `shadeform_train.sh`:
-```bash
-#!/bin/bash
-set -e
-
-# Log everything for debugging
-exec > >(tee /var/log/training.log) 2>&1
-echo "=== Training started at $(date) ==="
-
-# Clone repo and set up environment
-cd /root
-git clone https://github.com/gkobilansky/lansky-chat.git
-cd lansky-chat
-
-# Install dependencies
-pip install -r requirements.txt
-pip install wandb  # for logging
-
-# Download base checkpoint from your storage (e.g., HuggingFace, S3, GCS)
-# Option A: HuggingFace Hub
-# huggingface-cli download YOUR_USERNAME/lanbot-checkpoints --local-dir ~/.cache/nanochat/
-
-# Option B: Direct URL
-# wget -P ~/.cache/nanochat/base_checkpoints/d20/ YOUR_CHECKPOINT_URL
-
-# Download synthetic data
-# wget -P ~/.cache/nanochat/ YOUR_IDENTITY_DATA_URL
-
-# Run midtraining
-python -m scripts.mid_train --run=lanbot-v2
-
-# Upload results before instance dies
-# Option A: Push to HuggingFace
-# huggingface-cli upload YOUR_USERNAME/lanbot-checkpoints ~/.cache/nanochat/mid_checkpoints/
-
-# Option B: Upload to cloud storage
-# aws s3 sync ~/.cache/nanochat/mid_checkpoints/ s3://YOUR_BUCKET/mid_checkpoints/
-
-echo "=== Training completed at $(date) ==="
-```
-
-#### 3. Launch with Shadeform API
+**`scripts/launch_shadeform.sh`** — Launches Shadeform instance
+- Queries Shadeform API for available GPUs (B200, H100, etc.)
+- Interactive selection with pricing
+- Passes training script + env vars to instance
+- Sets up auto-delete at spend threshold (safety net)
+- Self-destruct after training completes (saves money)
 
 ```bash
-# Base64 encode the script
-SCRIPT_B64=$(base64 -i shadeform_train.sh)
-
-# Create instance with auto-delete
-curl -X POST https://api.shadeform.ai/v1/instances/create \
-  -H "X-API-KEY: $SHADEFORM_API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "cloud": "hyperstack",
-    "region": "canada-1",
-    "shade_instance_type": "H100_PCIe",
-    "shade_cloud": true,
-    "name": "lanbot-midtrain",
-    "launch_configuration": {
-      "type": "script",
-      "script_configuration": {
-        "base64_script": "'"$SCRIPT_B64"'"
-      }
-    },
-    "auto_delete": {
-      "spend_threshold": "150.00"
-    }
-  }'
+# Options
+./scripts/launch_shadeform.sh                    # Interactive B200 selection
+./scripts/launch_shadeform.sh --gpu H100         # Specific GPU type
+./scripts/launch_shadeform.sh --all-configs      # Show all GPU counts
+./scripts/launch_shadeform.sh --spend-limit 200  # Custom spend limit
+./scripts/launch_shadeform.sh --dry-run          # Preview without launching
 ```
 
-**Key Shadeform parameters:**
-| Parameter | Description |
-|-----------|-------------|
-| `auto_delete.spend_threshold` | Instance auto-terminates at this $ amount |
-| `auto_delete.date_threshold` | RFC3339 date for auto-termination |
-| `alert.spend_threshold` | Email alert (doesn't delete) |
+**`scripts/shadeform_train.sh`** — Runs on the cloud instance
+- Clones repo, installs deps
+- Downloads checkpoints from HuggingFace
+- Runs midtraining with auto-detected batch size
+- Uploads results back to HuggingFace
+- Self-destructs instance when complete
 
-**Cost estimation:**
-- 8×H100 @ ~$24/hr, midtraining ~1hr = ~$25
-- Set `spend_threshold: "150.00"` for safety margin (covers retries)
-- Or use `date_threshold` for time-based cutoff
-
-#### 4. Monitor training (optional)
-
+**`scripts/check_training_status.sh`** — Monitor from local machine
 ```bash
-# SSH into the instance
-ssh root@<instance_ip>
-
-# Check startup script logs
-journalctl -u init-script -f
-
-# Or check our log file
-tail -f /var/log/training.log
+./scripts/check_training_status.sh         # One-time check
+./scripts/check_training_status.sh --watch # Poll every 60s
 ```
 
-#### 5. Alternative: Use spend alerts instead
+Shows: instance status, spend, IP for SSH, HuggingFace upload status.
 
-If you want manual control but with notifications:
-```json
-{
-  "alert": {
-    "spend_threshold": "100.00"
-  },
-  "auto_delete": {
-    "spend_threshold": "200.00"
-  }
-}
-```
-This emails you at $100, auto-deletes at $200.
+#### Cost Estimation
+
+| GPU | Price/hr | Midtraining Time | Total Cost |
+|-----|----------|------------------|------------|
+| B200 x8 | ~$34 | ~45 min | ~$25 |
+| H100 x8 | ~$24 | ~60 min | ~$24 |
+
+Set `--spend-limit 150` for safety margin (covers retries).
 
 **Data mixture in midtraining** (from `scripts/mid_train.py:98-106`):
 - SmolTalk: 460K general conversations
