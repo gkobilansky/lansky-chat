@@ -5,5 +5,7 @@ rustbpe/target/
 dev-ignore/
 report.md
 eval_bundle/
-.envmy-checkpoints/
+.env
+my-checkpoints/
 wandb/
+.ssh_keys/
