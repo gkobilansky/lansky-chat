@@ -365,7 +365,8 @@ read -r -d '' PAYLOAD << EOF || true
     "envs": [
         {"name": "HF_TOKEN", "value": "$HF_TOKEN"},
         {"name": "SHADEFORM_API_KEY", "value": "$SHADEFORM_API_KEY"},
-        {"name": "INSTANCE_NAME", "value": "$INSTANCE_NAME"}
+        {"name": "INSTANCE_NAME", "value": "$INSTANCE_NAME"},
+        {"name": "WANDB_API_KEY", "value": "${WANDB_API_KEY:-}"}
     ],
     "auto_delete": {
         "spend_threshold": "$SPEND_LIMIT"
