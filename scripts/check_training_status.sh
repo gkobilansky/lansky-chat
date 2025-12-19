@@ -163,9 +163,19 @@ PYEOF
         echo "--- Checking HuggingFace for Logs ---"
         echo ""
 
-        if command -v hf &> /dev/null; then
-            HF_FILES=$(hf repo files "$HF_REPO" 2>/dev/null || echo "")
+        # List repo files using Python huggingface_hub
+        HF_FILES=$(python3 -c "
+from huggingface_hub import list_repo_files
+try:
+    files = list_repo_files('$HF_REPO')
+    print('\n'.join(files))
+except Exception as e:
+    print(f'ERROR: {e}', file=__import__('sys').stderr)
+" 2>/dev/null || echo "")
 
+        if [ -z "$HF_FILES" ]; then
+            echo "  (Could not list HF repo - check manually at https://huggingface.co/$HF_REPO)"
+        else
             # Check for error logs first
             ERROR_LOG=$(echo "$HF_FILES" | grep "logs/error-" | sort -r | head -1)
             SUCCESS_LOG=$(echo "$HF_FILES" | grep "logs/training-" | sort -r | head -1)
@@ -176,11 +186,11 @@ PYEOF
                 echo "=== Last Error Log Contents ==="
                 echo ""
                 # Download and display the error log
-                TEMP_LOG=$(mktemp)
-                hf download "$HF_REPO" "$ERROR_LOG" --local-dir "$(dirname "$TEMP_LOG")" --quiet 2>/dev/null
-                if [ -f "$(dirname "$TEMP_LOG")/$ERROR_LOG" ]; then
-                    tail -100 "$(dirname "$TEMP_LOG")/$ERROR_LOG"
-                    rm -rf "$(dirname "$TEMP_LOG")/${ERROR_LOG%%/*}"
+                TEMP_DIR=$(mktemp -d)
+                hf download "$HF_REPO" "$ERROR_LOG" --local-dir "$TEMP_DIR" --quiet 2>/dev/null
+                if [ -f "$TEMP_DIR/$ERROR_LOG" ]; then
+                    tail -100 "$TEMP_DIR/$ERROR_LOG"
+                    rm -rf "$TEMP_DIR"
                 else
                     echo "(Could not download error log)"
                 fi
@@ -197,8 +207,6 @@ PYEOF
             else
                 echo "  No logs found yet - training may not have started"
             fi
-        else
-            echo "  (hf CLI not found - check manually at https://huggingface.co/$HF_REPO)"
         fi
         echo ""
     else
@@ -206,10 +214,19 @@ PYEOF
         echo "--- HuggingFace Repo Status ---"
         echo ""
 
-        if command -v hf &> /dev/null; then
-            echo "Checking for training outputs..."
-            HF_FILES=$(hf repo files "$HF_REPO" 2>/dev/null || echo "")
+        echo "Checking for training outputs..."
+        HF_FILES=$(python3 -c "
+from huggingface_hub import list_repo_files
+try:
+    files = list_repo_files('$HF_REPO')
+    print('\n'.join(files))
+except Exception as e:
+    print(f'ERROR: {e}', file=__import__('sys').stderr)
+" 2>/dev/null || echo "")
 
+        if [ -z "$HF_FILES" ]; then
+            echo "  (Could not list HF repo - check manually at https://huggingface.co/$HF_REPO)"
+        else
             if echo "$HF_FILES" | grep -q "mid_checkpoints"; then
                 echo "  mid_checkpoints/: FOUND"
             else
@@ -221,8 +238,6 @@ PYEOF
             else
                 echo "  logs/: not yet"
             fi
-        else
-            echo "  (hf CLI not found - check manually at https://huggingface.co/$HF_REPO)"
         fi
         echo ""
     fi
