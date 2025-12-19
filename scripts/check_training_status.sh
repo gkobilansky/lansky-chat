@@ -163,15 +163,9 @@ PYEOF
         echo "--- Checking HuggingFace for Logs ---"
         echo ""
 
-        # List repo files using Python huggingface_hub
-        HF_FILES=$(python3 -c "
-from huggingface_hub import list_repo_files
-try:
-    files = list_repo_files('$HF_REPO')
-    print('\n'.join(files))
-except Exception as e:
-    print(f'ERROR: {e}', file=__import__('sys').stderr)
-" 2>/dev/null || echo "")
+        # List repo files using HuggingFace API
+        HF_FILES=$(curl -s "https://huggingface.co/api/models/$HF_REPO/tree/main" | \
+            python3 -c "import sys,json; [print(f['path']) for f in json.load(sys.stdin)]" 2>/dev/null || echo "")
 
         if [ -z "$HF_FILES" ]; then
             echo "  (Could not list HF repo - check manually at https://huggingface.co/$HF_REPO)"
@@ -215,14 +209,8 @@ except Exception as e:
         echo ""
 
         echo "Checking for training outputs..."
-        HF_FILES=$(python3 -c "
-from huggingface_hub import list_repo_files
-try:
-    files = list_repo_files('$HF_REPO')
-    print('\n'.join(files))
-except Exception as e:
-    print(f'ERROR: {e}', file=__import__('sys').stderr)
-" 2>/dev/null || echo "")
+        HF_FILES=$(curl -s "https://huggingface.co/api/models/$HF_REPO/tree/main" | \
+            python3 -c "import sys,json; [print(f['path']) for f in json.load(sys.stdin)]" 2>/dev/null || echo "")
 
         if [ -z "$HF_FILES" ]; then
             echo "  (Could not list HF repo - check manually at https://huggingface.co/$HF_REPO)"
