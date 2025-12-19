@@ -257,11 +257,14 @@ echo "Run name: $RUN_NAME"
 echo "Device batch size: $DEVICE_BATCH_SIZE"
 echo "Start time: $(date)"
 
-# Set WandB if configured
+# Set WandB if configured, otherwise disable it
 if [ -n "$WANDB_API_KEY" ]; then
     export WANDB_API_KEY
     export WANDB_PROJECT
     echo "WandB logging enabled (project: $WANDB_PROJECT)"
+else
+    export WANDB_MODE=disabled
+    echo "WandB disabled (no API key)"
 fi
 
 # Run midtraining
