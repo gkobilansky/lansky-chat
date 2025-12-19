@@ -163,18 +163,33 @@ PYEOF
         echo "--- Checking HuggingFace for Logs ---"
         echo ""
 
-        # List repo files using HuggingFace API
-        HF_FILES=$(curl -s "https://huggingface.co/api/models/$HF_REPO/tree/main" | \
+        # List repo files using HuggingFace API (check logs subdirectory)
+        HF_ROOT=$(curl -s "https://huggingface.co/api/models/$HF_REPO/tree/main" | \
+            python3 -c "import sys,json; [print(f['path']) for f in json.load(sys.stdin)]" 2>/dev/null || echo "")
+        HF_LOGS=$(curl -s "https://huggingface.co/api/models/$HF_REPO/tree/main/logs" | \
             python3 -c "import sys,json; [print(f['path']) for f in json.load(sys.stdin)]" 2>/dev/null || echo "")
 
-        if [ -z "$HF_FILES" ]; then
+        if [ -z "$HF_ROOT" ]; then
             echo "  (Could not list HF repo - check manually at https://huggingface.co/$HF_REPO)"
         else
             # Check for error logs first
-            ERROR_LOG=$(echo "$HF_FILES" | grep "logs/error-" | sort -r | head -1)
-            SUCCESS_LOG=$(echo "$HF_FILES" | grep "logs/training-" | sort -r | head -1)
+            ERROR_LOG=$(echo "$HF_LOGS" | grep "logs/error-" | sort -r | head -1)
+            SUCCESS_LOG=$(echo "$HF_LOGS" | grep "logs/training-" | sort -r | head -1)
 
-            if [ -n "$ERROR_LOG" ]; then
+            if [ -n "$SUCCESS_LOG" ]; then
+                # Success log exists - training completed
+                echo "✓ Found training log: $SUCCESS_LOG"
+                if [ -n "$ERROR_LOG" ]; then
+                    echo "  (Also found error log from earlier attempt: $ERROR_LOG)"
+                fi
+                echo ""
+                if echo "$HF_ROOT" | grep -q "mid_checkpoints"; then
+                    echo "✓ mid_checkpoints/: FOUND - Training completed successfully!"
+                else
+                    echo "  mid_checkpoints/: not yet uploaded"
+                fi
+            elif [ -n "$ERROR_LOG" ]; then
+                # Only error log, no success - training failed
                 echo "⚠️  Found error log: $ERROR_LOG"
                 echo ""
                 echo "=== Last Error Log Contents ==="
@@ -189,15 +204,6 @@ PYEOF
                     echo "(Could not download error log)"
                 fi
                 echo ""
-            elif [ -n "$SUCCESS_LOG" ]; then
-                echo "✓ Found training log: $SUCCESS_LOG"
-                echo "  (No error logs - training likely succeeded)"
-                echo ""
-                if echo "$HF_FILES" | grep -q "mid_checkpoints"; then
-                    echo "✓ mid_checkpoints/: FOUND - Training completed successfully!"
-                else
-                    echo "  mid_checkpoints/: not yet uploaded"
-                fi
             else
                 echo "  No logs found yet - training may not have started"
             fi
