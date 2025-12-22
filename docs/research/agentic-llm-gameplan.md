@@ -14,7 +14,7 @@ This document outlines the path from nanochat fork to a custom agentic LLM. Nano
 
 ## Progress Tracking
 
-### Current Status: Phase 2 — Personality Injection (Ready to Retrain)
+### Current Status: Phase 2 — Personality Injection ✅ COMPLETE
 
 **Completed:**
 - [x] **Phase 1: Full pipeline run on 8×H100** (see `my-checkpoints/report.md`)
@@ -40,17 +40,31 @@ This document outlines the path from nanochat fork to a custom agentic LLM. Nano
   - `base_checkpoints/d20/` (step 21400)
   - `mid_checkpoints/d20/` (step 809)
   - `chatsft_checkpoints/d20/` (step 700)
-
-**In Progress:**
 - [x] Set up Shadeform automated training with startup script
 - [x] Uploaded checkpoints and training data to HuggingFace
-- [ ] Re-run midtraining with LanBot identity data (running now)
-- [ ] Evaluate personality retention
+- [x] **Re-run midtraining with LanBot identity data** (Dec 19, 2024)
+  - Used 8×B200 on Shadeform (~$25-30)
+  - 813 steps, val bpb 0.45
+  - Checkpoints uploaded to `gkobilansky/lanbot-checkpoints`
+- [x] **Evaluated personality retention** ✅
+  - Model correctly identifies as "LanBot, created by Gene Kobilansky in 2025"
+  - Knows its purpose: "help answer questions, do math, and assist with coding"
+  - Note: Can't actually execute tasks yet (needs SFT + RL)
 
-**New Scripts:**
-- `scripts/launch_shadeform.sh` — Interactive instance launcher with GPU selection
-- `scripts/shadeform_train.sh` — Automated training script (runs on instance)
-- `scripts/check_training_status.sh` — Monitor training progress
+**Next Steps:**
+- [ ] Run SFT (Supervised Fine-Tuning) - teaches task completion
+- [ ] Run RL (Reinforcement Learning) - reinforces math/tool use
+- [ ] Build agent harness around the model
+
+**Shadeform Scripts:**
+
+| Script | Purpose |
+|--------|---------|
+| `launch_shadeform.sh` | Launch cloud GPU instance for training |
+| `shadeform_train.sh` | Runs on cloud instance (install, train, upload, self-destruct) |
+| `check_training_status.sh` | Monitor progress from local machine |
+
+See [Shadeform Scripts Reference](#shadeform-scripts-reference) below for details.
 
 **Hardware:**
 - **Cloud (completed):** 8×H100 PCIe, 633GB GPU RAM, $24/hr
@@ -148,6 +162,67 @@ Shows: instance status, spend, IP for SSH, HuggingFace upload status.
 | H100 x8 | ~$24 | ~60 min | ~$24 |
 
 Set `--spend-limit 150` for safety margin (covers retries).
+
+---
+
+### Shadeform Scripts Reference
+
+#### `scripts/launch_shadeform.sh`
+**Purpose:** Launch a cloud GPU instance for training
+
+What it does:
+1. Loads API keys from `.env` (SHADEFORM_API_KEY, HF_TOKEN, WANDB_API_KEY)
+2. Queries Shadeform API for available GPUs (B200, H100, etc.)
+3. Shows interactive menu to select instance by price
+4. Base64 encodes `shadeform_train.sh` and sends it as startup script
+5. Sets auto-delete at spend threshold (safety net)
+6. Returns instance ID and monitoring instructions
+
+```bash
+./scripts/launch_shadeform.sh                # Interactive GPU selection
+./scripts/launch_shadeform.sh --gpu H100     # Specific GPU
+./scripts/launch_shadeform.sh --dry-run      # Preview without launching
+```
+
+#### `scripts/shadeform_train.sh`
+**Purpose:** Runs automatically on the cloud instance after launch
+
+What it does:
+1. Installs dependencies (Rust, uv, Python packages)
+2. Clones the repo from GitHub
+3. Downloads checkpoints + training data from HuggingFace
+4. Auto-detects batch size based on GPU type (B200→64, H100→32, etc.)
+5. Runs midtraining with your identity data
+6. Uploads results back to HuggingFace
+7. Self-destructs the instance when done (saves money)
+8. On error: uploads error log, then self-destructs
+
+#### `scripts/check_training_status.sh`
+**Purpose:** Monitor training progress from your local machine
+
+What it does:
+1. Queries Shadeform API for active `lanbot-*` instances
+2. Shows: status, IP, spend, SSH connection command
+3. Checks HuggingFace for uploaded logs/checkpoints
+4. If no instance found, checks for success/error logs on HuggingFace
+
+```bash
+./scripts/check_training_status.sh           # One-time check
+./scripts/check_training_status.sh --watch   # Poll every 60s
+```
+
+#### Flow Diagram
+
+```
+launch_shadeform.sh (local)
+    → creates instance with shadeform_train.sh
+    → shadeform_train.sh runs on cloud
+    → check_training_status.sh monitors from local
+    → results uploaded to HuggingFace
+    → instance self-destructs
+```
+
+---
 
 **Data mixture in midtraining** (from `scripts/mid_train.py:98-106`):
 - SmolTalk: 460K general conversations
@@ -436,6 +511,45 @@ Week 6+: Scale up model size, iterate on capabilities
 
 ---
 
+## Future: Using Stronger Base Models
+
+The nanochat "train from scratch" approach is great for **learning** how everything works. For a **production agent**, you'd start with a pre-trained open-source model and apply the same pipeline on top.
+
+### Recommended Open-Source Models
+
+| Model | Params | License | Notes |
+|-------|--------|---------|-------|
+| **Qwen 2.5** | 0.5B - 72B | Apache 2.0 | Great for fine-tuning, permissive |
+| **Llama 3.2** | 1B - 90B | Llama License | Strong reasoning, needs Meta approval |
+| **Mistral** | 7B+ | Apache 2.0 | Good balance of size/capability |
+| **SmolLM2** | 135M - 1.7B | Apache 2.0 | Tiny but surprisingly capable |
+
+### Approach
+
+1. Skip tokenizer + base training (use pre-trained weights)
+2. Adapt mid-training script to load HuggingFace model
+3. Run mid-training with your identity data
+4. SFT + RL as normal
+5. Build agent harness
+
+This gives you a much smarter foundation while keeping your custom personality and tool-use training.
+
+---
+
+## Future Vision: Interactive Training Tutorial
+
+Inspired by [Claude Code for PMs](https://ccforpms.com/) — build an interactive tutorial inside Claude Code that walks people through:
+
+1. **Base Model** — Understanding pre-training (or using open-source)
+2. **Mid-Training** — Injecting personality and identity
+3. **SFT** — Teaching task completion
+4. **RL** — Reinforcing skills with rewards
+5. **Agent Harness** — Wrapping the model in a tool-use loop
+
+Goal: Make the full LLM → Agent pipeline accessible to anyone with a Claude Code subscription.
+
+---
+
 ## References
 
 - [nanochat discussion #139](https://github.com/karpathy/nanochat/discussions/139) — Personality via synthetic data
@@ -443,3 +557,4 @@ Week 6+: Scale up model size, iterate on capabilities
 - [hubcap](https://github.com/dave1010/hubcap) — Minimal agent loop pattern
 - [agent.py](https://github.com/lbeurerkellner/agent.py) — Single-file agent framework
 - [GPT-OSS-120B](https://huggingface.co/openai/gpt-oss-120b) — Multi-channel agentic format
+- [Claude Code for PMs](https://ccforpms.com/) — Interactive tutorial inspiration
