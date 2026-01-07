@@ -1,13 +1,22 @@
 #!/bin/bash
 #
-# Shadeform automated training script for LanBot midtraining
+# Shadeform automated training script for LanBot
 #
+# Supports all training phases: midtraining, SFT, and RL.
 # This script runs automatically on instance startup via Shadeform's
-# launch_configuration. It downloads checkpoints, runs midtraining,
+# launch_configuration. It downloads checkpoints, runs training,
 # and uploads results before auto-delete kicks in.
 #
 # Usage: Base64 encode this script and pass to Shadeform API
 #   SCRIPT_B64=$(base64 -i scripts/shadeform_train.sh)
+#
+# Training phases (set via TRAINING_PHASE env var):
+#   mid     - Midtraining only (personality injection)
+#   sft     - Supervised Fine-Tuning only (task completion)
+#   rl      - Reinforcement Learning only (math reinforcement)
+#   mid+sft - Midtraining then SFT
+#   sft+rl  - SFT then RL
+#   all     - Full pipeline: mid → sft → rl
 #
 set -e
 
@@ -23,8 +32,11 @@ HF_TOKEN="${HF_TOKEN:-}"                   # Set via Shadeform envs or here
 GITHUB_REPO="https://github.com/gkobilansky/lansky-chat.git"
 GITHUB_BRANCH="master"
 
+# Training phase: mid, sft, rl, mid+sft, sft+rl, all
+TRAINING_PHASE="${TRAINING_PHASE:-sft}"
+
 # Training settings
-RUN_NAME="lanbot-v2"
+RUN_NAME="${RUN_NAME:-lanbot-v3}"
 # Batch size will be auto-detected based on GPU type
 # B200 (192GB): 64, H100 (80GB): 32, A100 (40/80GB): 16-32
 DEVICE_BATCH_SIZE="${DEVICE_BATCH_SIZE:-auto}"
@@ -94,43 +106,57 @@ for inst in data.get('instances', []):
 }
 
 # ============================================================================
-# ERROR HANDLER - Upload logs and self-destruct on failure
+# CLEANUP HANDLER - Always self-destruct on exit (success or failure)
 # ============================================================================
 
-handle_error() {
+SELF_DESTRUCT_DONE=false
+
+cleanup_on_exit() {
     local exit_code=$?
-    local line_number=$1
+
+    # Avoid running twice
+    if [ "$SELF_DESTRUCT_DONE" = true ]; then
+        return
+    fi
+    SELF_DESTRUCT_DONE=true
 
     echo ""
-    echo "!!! ERROR on line $line_number (exit code: $exit_code) !!!"
-    echo "Uploading error log before self-destruct..."
+    echo "=== Cleanup on exit (code: $exit_code) ==="
 
-    # Try to upload log even on failure (best effort)
-    if [ -n "$HF_TOKEN" ] && command -v hf &> /dev/null; then
-        hf upload "$HF_REPO" \
-            "$LOG_FILE" \
-            "logs/error-$(date +%Y%m%d-%H%M%S).log" \
-            --token "$HF_TOKEN" \
-            --commit-message "Error log: $RUN_NAME (line $line_number)" 2>/dev/null || true
-    elif [ -n "$HF_TOKEN" ] && [ -d ".venv" ]; then
-        uv run hf upload "$HF_REPO" \
-            "$LOG_FILE" \
-            "logs/error-$(date +%Y%m%d-%H%M%S).log" \
-            --token "$HF_TOKEN" \
-            --commit-message "Error log: $RUN_NAME (line $line_number)" 2>/dev/null || true
+    # Try to upload log (best effort)
+    if [ -n "$HF_TOKEN" ] && [ -f "$LOG_FILE" ]; then
+        local log_type="success"
+        if [ $exit_code -ne 0 ]; then
+            log_type="error"
+        fi
+
+        echo "Uploading $log_type log..."
+        if command -v hf &> /dev/null; then
+            hf upload "$HF_REPO" \
+                "$LOG_FILE" \
+                "logs/${log_type}-$(date +%Y%m%d-%H%M%S).log" \
+                --token "$HF_TOKEN" \
+                --commit-message "Training log: $RUN_NAME ($log_type)" 2>/dev/null || true
+        elif [ -d "/root/lansky-chat/.venv" ]; then
+            cd /root/lansky-chat 2>/dev/null || true
+            uv run hf upload "$HF_REPO" \
+                "$LOG_FILE" \
+                "logs/${log_type}-$(date +%Y%m%d-%H%M%S).log" \
+                --token "$HF_TOKEN" \
+                --commit-message "Training log: $RUN_NAME ($log_type)" 2>/dev/null || true
+        fi
     fi
 
-    echo "Log upload attempted. Now self-destructing to save costs..."
+    echo "Self-destructing to save costs..."
     self_destruct
-
-    exit $exit_code
 }
 
-# Trap errors and call handler with line number
-trap 'handle_error $LINENO' ERR
+# Always run cleanup on exit (normal, error, or signal)
+trap cleanup_on_exit EXIT
 
 echo "=============================================="
 echo "LanBot Training Script"
+echo "Phase: $TRAINING_PHASE"
 echo "Started: $(date)"
 echo "=============================================="
 
@@ -142,25 +168,43 @@ echo "$GPU_INFO"
 echo "CPUs: $(nproc)"
 echo "Memory: $(free -h | grep Mem | awk '{print $2}')"
 
+# Count number of GPUs
+NUM_GPUS=$(nvidia-smi --query-gpu=name --format=csv,noheader | wc -l)
+echo "Number of GPUs: $NUM_GPUS"
+
 # Auto-detect batch size based on GPU type
+# Note: SFT has variable sequence lengths, so we use conservative batch sizes
+# Midtraining can use larger batches due to fixed sequence lengths
 if [ "$DEVICE_BATCH_SIZE" = "auto" ]; then
     if echo "$GPU_INFO" | grep -qi "B200"; then
-        DEVICE_BATCH_SIZE=64
-        echo "Detected B200 GPU - using batch size 64"
-    elif echo "$GPU_INFO" | grep -qi "H200"; then
-        DEVICE_BATCH_SIZE=48
-        echo "Detected H200 GPU - using batch size 48"
-    elif echo "$GPU_INFO" | grep -qi "H100"; then
         DEVICE_BATCH_SIZE=32
-        echo "Detected H100 GPU - using batch size 32"
-    elif echo "$GPU_INFO" | grep -qi "A100"; then
+        echo "Detected B200 GPU - using batch size 32"
+    elif echo "$GPU_INFO" | grep -qi "H200"; then
+        DEVICE_BATCH_SIZE=24
+        echo "Detected H200 GPU - using batch size 24"
+    elif echo "$GPU_INFO" | grep -qi "H100"; then
         DEVICE_BATCH_SIZE=16
-        echo "Detected A100 GPU - using batch size 16"
-    else
+        echo "Detected H100 GPU - using batch size 16"
+    elif echo "$GPU_INFO" | grep -qi "A100"; then
         DEVICE_BATCH_SIZE=8
-        echo "Unknown GPU - using conservative batch size 8"
+        echo "Detected A100 GPU - using batch size 8"
+    else
+        DEVICE_BATCH_SIZE=4
+        echo "Unknown GPU - using conservative batch size 4"
     fi
 fi
+
+# Compute batch parameters for each training script (grad_accum_steps=1 for efficiency)
+# - mid_train.py uses total_batch_size (in tokens)
+# - chat_sft.py uses target_examples_per_step (in examples)
+# - chat_rl.py uses examples_per_step (in examples)
+MAX_SEQ_LEN=2048
+TOTAL_BATCH_SIZE=$((DEVICE_BATCH_SIZE * MAX_SEQ_LEN * NUM_GPUS))
+TARGET_EXAMPLES_PER_STEP=$((DEVICE_BATCH_SIZE * NUM_GPUS))
+EXAMPLES_PER_STEP=$((16 * NUM_GPUS))  # RL uses smaller batches, scale with GPUs
+echo "Target examples per step (SFT): $TARGET_EXAMPLES_PER_STEP"
+echo "Total batch size (mid): $TOTAL_BATCH_SIZE tokens"
+echo "Examples per step (RL): $EXAMPLES_PER_STEP"
 
 # ============================================================================
 # STEP 1: Clone repo and install dependencies
@@ -208,8 +252,7 @@ uv run maturin develop --release --manifest-path rustbpe/Cargo.toml
 echo ""
 echo "=== Step 2: Downloading checkpoints ==="
 
-mkdir -p "$CACHE_DIR/base_checkpoints/d20"
-mkdir -p "$CACHE_DIR/tokenizer"
+mkdir -p "$CACHE_DIR"
 
 # Login to HuggingFace if token provided
 if [ -n "$HF_TOKEN" ]; then
@@ -217,17 +260,38 @@ if [ -n "$HF_TOKEN" ]; then
     uv run hf auth login --token "$HF_TOKEN"
 fi
 
-# Download base checkpoint
-echo "Downloading base checkpoint..."
-uv run hf download "$HF_REPO" \
-    --include "base_checkpoints/d20/*" \
-    --local-dir "$CACHE_DIR"
-
-# Download tokenizer
+# Download tokenizer (always needed)
 echo "Downloading tokenizer..."
 uv run hf download "$HF_REPO" \
     --include "tokenizer/*" \
     --local-dir "$CACHE_DIR"
+
+# Download checkpoints based on training phase
+case "$TRAINING_PHASE" in
+    mid|all|mid+sft)
+        echo "Downloading base checkpoint (needed for midtraining)..."
+        uv run hf download "$HF_REPO" \
+            --include "base_checkpoints/d20/*" \
+            --local-dir "$CACHE_DIR"
+        ;;
+    sft|sft+rl)
+        echo "Downloading mid checkpoint (needed for SFT)..."
+        uv run hf download "$HF_REPO" \
+            --include "mid_checkpoints/d20/*" \
+            --local-dir "$CACHE_DIR"
+        ;;
+    rl)
+        echo "Downloading SFT checkpoint (needed for RL)..."
+        uv run hf download "$HF_REPO" \
+            --include "chatsft_checkpoints/d20/*" \
+            --local-dir "$CACHE_DIR"
+        ;;
+    *)
+        echo "ERROR: Unknown training phase: $TRAINING_PHASE"
+        echo "Valid phases: mid, sft, rl, mid+sft, sft+rl, all"
+        exit 1
+        ;;
+esac
 
 echo "Checkpoint download complete!"
 ls -la "$CACHE_DIR/"
@@ -248,89 +312,195 @@ echo "Training data files:"
 ls -la "$CACHE_DIR"/*.jsonl 2>/dev/null || echo "No JSONL files found - will use defaults"
 
 # ============================================================================
-# STEP 4: Run midtraining
+# TRAINING FUNCTIONS
 # ============================================================================
-
-echo ""
-echo "=== Step 4: Starting midtraining ==="
-echo "Run name: $RUN_NAME"
-echo "Device batch size: $DEVICE_BATCH_SIZE"
-echo "Start time: $(date)"
 
 # Set WandB if configured, otherwise disable it
-if [ -n "$WANDB_API_KEY" ]; then
-    export WANDB_API_KEY
-    export WANDB_PROJECT
-    echo "WandB logging enabled (project: $WANDB_PROJECT)"
-else
-    export WANDB_MODE=disabled
-    echo "WandB disabled (no API key)"
-fi
+setup_wandb() {
+    if [ -n "$WANDB_API_KEY" ]; then
+        export WANDB_API_KEY
+        export WANDB_PROJECT
+        echo "WandB logging enabled (project: $WANDB_PROJECT)"
+    else
+        export WANDB_MODE=disabled
+        echo "WandB disabled (no API key)"
+    fi
+}
 
-# Run midtraining
-uv run python -m scripts.mid_train \
-    --run="$RUN_NAME" \
-    --device_batch_size="$DEVICE_BATCH_SIZE"
+# Helper to run training with torchrun for multi-GPU or python for single GPU
+# Each training script has different batch parameters:
+#   mid_train.py: --total_batch_size (in tokens)
+#   chat_sft.py: --target_examples_per_step (in examples)
+#   chat_rl.py: --examples_per_step (in examples)
+run_training() {
+    local module="$1"
+    local run_suffix="$2"
+    shift 2
+    local extra_args=("$@")
 
-MID_EXIT_CODE=$?
-echo "Midtraining exit code: $MID_EXIT_CODE"
-echo "Midtraining completed: $(date)"
+    # Build batch size argument based on which script we're running
+    local batch_arg=""
+    case "$module" in
+        scripts.mid_train)
+            batch_arg="--total_batch_size=$TOTAL_BATCH_SIZE"
+            ;;
+        scripts.chat_sft)
+            batch_arg="--target_examples_per_step=$TARGET_EXAMPLES_PER_STEP"
+            ;;
+        scripts.chat_rl)
+            batch_arg="--examples_per_step=$EXAMPLES_PER_STEP"
+            ;;
+    esac
 
-# ============================================================================
-# STEP 5: Upload results
-# ============================================================================
+    if [ "$NUM_GPUS" -gt 1 ]; then
+        echo "Using torchrun with $NUM_GPUS GPUs"
+        uv run torchrun --standalone --nproc_per_node="$NUM_GPUS" \
+            -m "$module" -- \
+            --run="${RUN_NAME}-${run_suffix}" \
+            --device_batch_size="$DEVICE_BATCH_SIZE" \
+            $batch_arg \
+            "${extra_args[@]}"
+    else
+        echo "Using single GPU"
+        uv run python -m "$module" \
+            --run="${RUN_NAME}-${run_suffix}" \
+            --device_batch_size="$DEVICE_BATCH_SIZE" \
+            $batch_arg \
+            "${extra_args[@]}"
+    fi
+}
 
-echo ""
-echo "=== Step 5: Uploading results ==="
+# Run midtraining phase
+run_midtraining() {
+    echo ""
+    echo "=== Running Midtraining ==="
+    echo "Run name: ${RUN_NAME}-mid"
+    echo "Device batch size: $DEVICE_BATCH_SIZE"
+    echo "Total batch size: $TOTAL_BATCH_SIZE tokens"
+    echo "Start time: $(date)"
 
-if [ $MID_EXIT_CODE -eq 0 ]; then
-    echo "Uploading mid checkpoints to HuggingFace..."
+    run_training scripts.mid_train mid
 
-    # Find the latest checkpoint
-    LATEST_MID=$(ls -t "$CACHE_DIR/mid_checkpoints/d20/"model_*.pt 2>/dev/null | head -1)
+    local exit_code=$?
+    echo "Midtraining exit code: $exit_code"
+    echo "Midtraining completed: $(date)"
 
-    if [ -n "$LATEST_MID" ]; then
-        echo "Found checkpoint: $LATEST_MID"
-
-        # Upload mid checkpoints
+    if [ $exit_code -eq 0 ]; then
+        echo "Uploading mid checkpoints..."
         uv run hf upload "$HF_REPO" \
             "$CACHE_DIR/mid_checkpoints" \
             "mid_checkpoints" \
-            --commit-message "Midtraining run: $RUN_NAME ($(date +%Y-%m-%d))"
-
-        echo "Upload complete!"
-    else
-        echo "ERROR: No checkpoint found to upload"
+            --commit-message "Midtraining: $RUN_NAME ($(date +%Y-%m-%d))"
     fi
-else
-    echo "ERROR: Midtraining failed, skipping upload"
-fi
 
-# Upload logs regardless
-echo "Uploading training log..."
-uv run hf upload "$HF_REPO" \
-    "$LOG_FILE" \
-    "logs/training-$(date +%Y%m%d-%H%M%S).log" \
-    --commit-message "Training log: $RUN_NAME"
+    return $exit_code
+}
+
+# Run SFT phase
+run_sft() {
+    echo ""
+    echo "=== Running SFT (Supervised Fine-Tuning) ==="
+    echo "Run name: ${RUN_NAME}-sft"
+    echo "Device batch size: $DEVICE_BATCH_SIZE"
+    echo "Target examples per step: $TARGET_EXAMPLES_PER_STEP"
+    echo "Start time: $(date)"
+
+    run_training scripts.chat_sft sft
+
+    local exit_code=$?
+    echo "SFT exit code: $exit_code"
+    echo "SFT completed: $(date)"
+
+    if [ $exit_code -eq 0 ]; then
+        echo "Uploading SFT checkpoints..."
+        uv run hf upload "$HF_REPO" \
+            "$CACHE_DIR/chatsft_checkpoints" \
+            "chatsft_checkpoints" \
+            --commit-message "SFT: $RUN_NAME ($(date +%Y-%m-%d))"
+    fi
+
+    return $exit_code
+}
+
+# Run RL phase
+run_rl() {
+    echo ""
+    echo "=== Running RL (Reinforcement Learning) ==="
+    echo "Run name: ${RUN_NAME}-rl"
+    echo "Device batch size: $DEVICE_BATCH_SIZE"
+    echo "Examples per step: $EXAMPLES_PER_STEP"
+    echo "Start time: $(date)"
+
+    run_training scripts.chat_rl rl
+
+    local exit_code=$?
+    echo "RL exit code: $exit_code"
+    echo "RL completed: $(date)"
+
+    if [ $exit_code -eq 0 ]; then
+        echo "Uploading RL checkpoints..."
+        uv run hf upload "$HF_REPO" \
+            "$CACHE_DIR/chatrl_checkpoints" \
+            "chatrl_checkpoints" \
+            --commit-message "RL: $RUN_NAME ($(date +%Y-%m-%d))"
+    fi
+
+    return $exit_code
+}
 
 # ============================================================================
-# DONE
+# STEP 4: Run training phase(s)
+# ============================================================================
+
+echo ""
+echo "=== Step 4: Training (phase: $TRAINING_PHASE) ==="
+setup_wandb
+
+TRAINING_EXIT_CODE=0
+
+case "$TRAINING_PHASE" in
+    mid)
+        run_midtraining
+        TRAINING_EXIT_CODE=$?
+        ;;
+    sft)
+        run_sft
+        TRAINING_EXIT_CODE=$?
+        ;;
+    rl)
+        run_rl
+        TRAINING_EXIT_CODE=$?
+        ;;
+    mid+sft)
+        run_midtraining && run_sft
+        TRAINING_EXIT_CODE=$?
+        ;;
+    sft+rl)
+        run_sft && run_rl
+        TRAINING_EXIT_CODE=$?
+        ;;
+    all)
+        run_midtraining && run_sft && run_rl
+        TRAINING_EXIT_CODE=$?
+        ;;
+esac
+
+echo ""
+echo "Training phase(s) completed with exit code: $TRAINING_EXIT_CODE"
+
+# ============================================================================
+# DONE - EXIT trap will handle log upload and self-destruct
 # ============================================================================
 
 echo ""
 echo "=============================================="
 echo "Training script completed!"
+echo "Phase: $TRAINING_PHASE"
 echo "End time: $(date)"
-echo "Exit code: $MID_EXIT_CODE"
+echo "Exit code: $TRAINING_EXIT_CODE"
 echo "=============================================="
 echo ""
 echo "Check HuggingFace repo for results: https://huggingface.co/$HF_REPO"
 
-# ============================================================================
-# STEP 6: Self-destruct
-# ============================================================================
-
-# Delete instance to stop billing (auto_delete is backup if this fails)
-self_destruct
-
-exit $MID_EXIT_CODE
+# Exit with training exit code - EXIT trap will handle cleanup
+exit $TRAINING_EXIT_CODE
