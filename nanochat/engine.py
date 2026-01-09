@@ -19,6 +19,7 @@ from contextlib import contextmanager
 from collections import deque
 from nanochat.common import compute_init, autodetect_device_type
 from nanochat.checkpoint_manager import load_model
+from nanochat.tokenizer import PYTHON_START, PYTHON_END, OUTPUT_START, OUTPUT_END, ASSISTANT_END
 from contextlib import nullcontext 
 
 # -----------------------------------------------------------------------------
@@ -200,11 +201,11 @@ class Engine:
 
         # Get the special tokens we need to coordinate the tool use state machine
         get_special = lambda s: self.tokenizer.encode_special(s)
-        python_start = get_special("<|python_start|>")
-        python_end = get_special("<|python_end|>")
-        output_start = get_special("<|output_start|>")
-        output_end = get_special("<|output_end|>")
-        assistant_end = get_special("<|assistant_end|>") # if sampled, ends row
+        python_start = get_special(PYTHON_START)
+        python_end = get_special(PYTHON_END)
+        output_start = get_special(OUTPUT_START)
+        output_end = get_special(OUTPUT_END)
+        assistant_end = get_special(ASSISTANT_END) # if sampled, ends row
         bos = self.tokenizer.get_bos_token_id() # if sampled, ends row
 
         # 1) Run a batch 1 prefill of the prompt tokens
@@ -302,7 +303,7 @@ class Engine:
         Returns a list of token sequences (list of lists of ints).
         Terminal tokens (assistant_end, bos) are not included in the results.
         """
-        assistant_end = self.tokenizer.encode_special("<|assistant_end|>")
+        assistant_end = self.tokenizer.encode_special(ASSISTANT_END)
         bos = self.tokenizer.get_bos_token_id()
         results = [tokens.copy() for _ in range(num_samples)]
         masks = [[0] * len(tokens) for _ in range(num_samples)]

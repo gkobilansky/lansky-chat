@@ -24,6 +24,51 @@ SPECIAL_TOKENS = [
     "<|output_end|>",
 ]
 
+# Individual token constants for easy import
+BOS = "<|bos|>"
+USER_START = "<|user_start|>"
+USER_END = "<|user_end|>"
+ASSISTANT_START = "<|assistant_start|>"
+ASSISTANT_END = "<|assistant_end|>"
+PYTHON_START = "<|python_start|>"
+PYTHON_END = "<|python_end|>"
+OUTPUT_START = "<|output_start|>"
+OUTPUT_END = "<|output_end|>"
+
+
+def validate_tool_call(text: str) -> tuple[bool, str]:
+    """
+    Validate that tool call format is correct in the given text.
+
+    Checks:
+    - Balanced python_start/python_end tags
+    - Balanced output_start/output_end tags
+    - Proper nesting (output tags inside python tags)
+
+    Returns:
+        (is_valid, error_message) - error_message is empty if valid
+    """
+    import re
+
+    # Count occurrences of each tag
+    python_starts = len(re.findall(re.escape(PYTHON_START), text))
+    python_ends = len(re.findall(re.escape(PYTHON_END), text))
+    output_starts = len(re.findall(re.escape(OUTPUT_START), text))
+    output_ends = len(re.findall(re.escape(OUTPUT_END), text))
+
+    # Check balanced tags
+    if python_starts != python_ends:
+        return False, f"Unbalanced python tags: {python_starts} starts, {python_ends} ends"
+    if output_starts != output_ends:
+        return False, f"Unbalanced output tags: {output_starts} starts, {output_ends} ends"
+
+    # Check that each output block is paired with a python block
+    if output_starts > python_starts:
+        return False, f"More output blocks ({output_starts}) than python blocks ({python_starts})"
+
+    return True, ""
+
+
 # NOTE: this split pattern deviates from GPT-4 in that we use \p{N}{1,2} instead of \p{N}{1,3}
 # I did this because I didn't want to "waste" too many tokens on numbers for smaller vocab sizes.
 # I haven't validated that this is actually a good idea, TODO.

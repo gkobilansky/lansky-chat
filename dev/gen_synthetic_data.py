@@ -56,6 +56,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import requests
 
 from nanochat.common import get_base_dir
+from nanochat.tokenizer import PYTHON_START, PYTHON_END, OUTPUT_START, OUTPUT_END
 
 
 # -----------------------------------------------------------------------------
@@ -515,18 +516,18 @@ The user asking has this background:
 {persona}
 
 Tool format: The assistant can compute math by writing:
-<|python_start|> expression <|python_end|>
+{PYTHON_START} expression {PYTHON_END}
 The system will inject the result as:
-<|output_start|> result <|output_end|>
+{OUTPUT_START} result {OUTPUT_END}
 
 Example:
 User: What's 15% of 80?
 Assistant: Let me calculate that.
-<|python_start|> 80 * 0.15 <|python_end|><|output_start|> 12.0 <|output_end|>
+{PYTHON_START} 80 * 0.15 {PYTHON_END}{OUTPUT_START} 12.0 {OUTPUT_END}
 15% of 80 is 12.
 
 For counting letters, use: "word".count("letter")
-Example: <|python_start|> "strawberry".count("r") <|python_end|><|output_start|> 3 <|output_end|>
+Example: {PYTHON_START} "strawberry".count("r") {PYTHON_END}{OUTPUT_START} 3 {OUTPUT_END}
 
 Scenario: {scenario['scenario']}
 Example query: "{scenario['example_query']}"
@@ -553,9 +554,9 @@ The user asking has this background:
 {persona}
 
 Tool format: The assistant can compute math by writing:
-<|python_start|> expression <|python_end|>
+{PYTHON_START} expression {PYTHON_END}
 The system will inject the result as:
-<|output_start|> result <|output_end|>
+{OUTPUT_START} result {OUTPUT_END}
 
 IMPORTANT: For multi-step problems, the assistant should:
 1. Briefly explain the approach
@@ -568,13 +569,13 @@ User: What's 20% tip on a $85 bill, plus 8% tax on the original?
 Assistant: I'll calculate this step by step.
 
 First, the tip:
-<|python_start|> 85 * 0.20 <|python_end|><|output_start|> 17.0 <|output_end|>
+{PYTHON_START} 85 * 0.20 {PYTHON_END}{OUTPUT_START} 17.0 {OUTPUT_END}
 
 Now the tax:
-<|python_start|> 85 * 0.08 <|python_end|><|output_start|> 6.8 <|output_end|>
+{PYTHON_START} 85 * 0.08 {PYTHON_END}{OUTPUT_START} 6.8 {OUTPUT_END}
 
 Total:
-<|python_start|> 85 + 17.0 + 6.8 <|python_end|><|output_start|> 108.8 <|output_end|>
+{PYTHON_START} 85 + 17.0 + 6.8 {PYTHON_END}{OUTPUT_START} 108.8 {OUTPUT_END}
 
 So the total comes to $108.80.
 
@@ -602,7 +603,7 @@ def build_no_tool_prompt(identity: ModelIdentity, rng: random.Random, persona_po
 The user asking has this background:
 {persona}
 
-IMPORTANT: The assistant has access to a calculator tool (<|python_start|>...<|python_end|>)
+IMPORTANT: The assistant has access to a calculator tool ({PYTHON_START}...{PYTHON_END})
 but should NOT use it for this conversation. The question doesn't require calculation.
 
 Scenario type: {scenario['scenario']}
@@ -614,7 +615,7 @@ Requirements:
 - Response should be helpful and natural
 - 2-3 turns total
 - Simple ASCII only, no emojis
-- DO NOT include any <|python_start|> or <|output_start|> tags"""
+- DO NOT include any {PYTHON_START} or {OUTPUT_START} tags"""
 
 
 def build_tool_planning_prompt(identity: ModelIdentity, rng: random.Random, persona_pool: PersonaPool) -> str:
@@ -629,7 +630,7 @@ def build_tool_planning_prompt(identity: ModelIdentity, rng: random.Random, pers
 The user asking has this background:
 {persona}
 
-Tool format: <|python_start|> expression <|python_end|> -> <|output_start|> result <|output_end|>
+Tool format: {PYTHON_START} expression {PYTHON_END} -> {OUTPUT_START} result {OUTPUT_END}
 
 IMPORTANT: The assistant should:
 1. First THINK about the problem and outline steps (before any tool use)
@@ -644,15 +645,15 @@ Assistant: Let me break this down:
 3. Finally multiply by price per gallon
 
 Step 1 - MPG:
-<|python_start|> 180 / 6 <|python_end|><|output_start|> 30.0 <|output_end|>
+{PYTHON_START} 180 / 6 {PYTHON_END}{OUTPUT_START} 30.0 {OUTPUT_END}
 The car gets 30 mpg.
 
 Step 2 - Gallons for 300 miles:
-<|python_start|> 300 / 30 <|python_end|><|output_start|> 10.0 <|output_end|>
+{PYTHON_START} 300 / 30 {PYTHON_END}{OUTPUT_START} 10.0 {OUTPUT_END}
 Need 10 gallons.
 
 Step 3 - Total cost:
-<|python_start|> 10 * 3.40 <|python_end|><|output_start|> 34.0 <|output_end|>
+{PYTHON_START} 10 * 3.40 {PYTHON_END}{OUTPUT_START} 34.0 {OUTPUT_END}
 
 It would cost $34.00 to drive 300 miles.
 
@@ -741,23 +742,23 @@ def validate_conversation(messages: list, conv_type: str) -> tuple[bool, str]:
 
     if conv_type == "tool_use":
         # Should contain tool tags
-        if "<|python_start|>" not in full_text:
+        if PYTHON_START not in full_text:
             return False, "Tool use conversation missing tool tags"
 
     if conv_type == "multi_step_tool":
         # Should contain multiple tool calls
-        tool_count = full_text.count("<|python_start|>")
+        tool_count = full_text.count(PYTHON_START)
         if tool_count < 2:
             return False, f"Multi-step should have 2+ tool calls, got {tool_count}"
 
     if conv_type == "no_tool":
         # Should NOT contain tool tags
-        if "<|python_start|>" in full_text:
+        if PYTHON_START in full_text:
             return False, "No-tool conversation should not have tool tags"
 
     if conv_type == "tool_planning":
         # Should have planning (numbered list) AND tool tags
-        if "<|python_start|>" not in full_text:
+        if PYTHON_START not in full_text:
             return False, "Planning conversation missing tool tags"
         # Check for numbered steps (1. or 1) patterns)
         import re
