@@ -11,12 +11,13 @@
 #   SCRIPT_B64=$(base64 -i scripts/shadeform_train.sh)
 #
 # Training phases (set via TRAINING_PHASE env var):
-#   mid     - Midtraining only (personality injection)
-#   sft     - Supervised Fine-Tuning only (task completion)
-#   rl      - Reinforcement Learning only (math reinforcement)
-#   mid+sft - Midtraining then SFT
-#   sft+rl  - SFT then RL
-#   all     - Full pipeline: mid → sft → rl
+#   mid      - Midtraining only (personality injection)
+#   sft      - Supervised Fine-Tuning only (task completion)
+#   rl       - Reinforcement Learning only (GSM8K math)
+#   agent_rl - Agent RL (GSM8K + HumanEval, enhanced rewards)
+#   mid+sft  - Midtraining then SFT
+#   sft+rl   - SFT then RL
+#   all      - Full pipeline: mid → sft → rl
 #
 set -e
 
@@ -176,7 +177,10 @@ echo "Number of GPUs: $NUM_GPUS"
 # Note: SFT has variable sequence lengths, so we use conservative batch sizes
 # Midtraining can use larger batches due to fixed sequence lengths
 if [ "$DEVICE_BATCH_SIZE" = "auto" ]; then
-    if echo "$GPU_INFO" | grep -qi "B200"; then
+    if echo "$GPU_INFO" | grep -qi "B300"; then
+        DEVICE_BATCH_SIZE=32
+        echo "Detected B300 GPU - using batch size 32"
+    elif echo "$GPU_INFO" | grep -qi "B200"; then
         DEVICE_BATCH_SIZE=32
         echo "Detected B200 GPU - using batch size 32"
     elif echo "$GPU_INFO" | grep -qi "H200"; then
@@ -280,7 +284,7 @@ case "$TRAINING_PHASE" in
             --include "mid_checkpoints/d20/*" \
             --local-dir "$CACHE_DIR"
         ;;
-    rl)
+    rl|agent_rl)
         echo "Downloading SFT checkpoint (needed for RL)..."
         uv run hf download "$HF_REPO" \
             --include "chatsft_checkpoints/d20/*" \
@@ -288,7 +292,7 @@ case "$TRAINING_PHASE" in
         ;;
     *)
         echo "ERROR: Unknown training phase: $TRAINING_PHASE"
-        echo "Valid phases: mid, sft, rl, mid+sft, sft+rl, all"
+        echo "Valid phases: mid, sft, rl, agent_rl, mid+sft, sft+rl, all"
         exit 1
         ;;
 esac
@@ -347,7 +351,7 @@ run_training() {
         scripts.chat_sft)
             batch_arg="--target_examples_per_step=$TARGET_EXAMPLES_PER_STEP"
             ;;
-        scripts.chat_rl)
+        scripts.chat_rl|scripts.agent_rl)
             batch_arg="--examples_per_step=$EXAMPLES_PER_STEP"
             ;;
     esac
@@ -448,6 +452,33 @@ run_rl() {
     return $exit_code
 }
 
+# Run Agent RL phase (multi-task with enhanced rewards)
+run_agent_rl() {
+    echo ""
+    echo "=== Running Agent RL (Multi-Task Reinforcement Learning) ==="
+    echo "Run name: ${RUN_NAME}-agent-rl"
+    echo "Device batch size: $DEVICE_BATCH_SIZE"
+    echo "Examples per step: $EXAMPLES_PER_STEP"
+    echo "Tasks: 70% GSM8K (math) + 30% HumanEval (coding)"
+    echo "Start time: $(date)"
+
+    run_training scripts.agent_rl agent-rl
+
+    local exit_code=$?
+    echo "Agent RL exit code: $exit_code"
+    echo "Agent RL completed: $(date)"
+
+    if [ $exit_code -eq 0 ]; then
+        echo "Uploading Agent RL checkpoints..."
+        uv run hf upload "$HF_REPO" \
+            "$CACHE_DIR/agentrl_checkpoints" \
+            "agentrl_checkpoints" \
+            --commit-message "Agent RL: $RUN_NAME ($(date +%Y-%m-%d))"
+    fi
+
+    return $exit_code
+}
+
 # ============================================================================
 # STEP 4: Run training phase(s)
 # ============================================================================
@@ -469,6 +500,10 @@ case "$TRAINING_PHASE" in
         ;;
     rl)
         run_rl
+        TRAINING_EXIT_CODE=$?
+        ;;
+    agent_rl)
+        run_agent_rl
         TRAINING_EXIT_CODE=$?
         ;;
     mid+sft)

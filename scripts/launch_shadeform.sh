@@ -9,7 +9,8 @@
 # Usage:
 #   ./scripts/launch_shadeform.sh                    # Default: SFT training
 #   ./scripts/launch_shadeform.sh --phase sft        # SFT training
-#   ./scripts/launch_shadeform.sh --phase rl         # RL training
+#   ./scripts/launch_shadeform.sh --phase rl         # RL training (GSM8K only)
+#   ./scripts/launch_shadeform.sh --phase agent_rl   # Agent RL (GSM8K + HumanEval)
 #   ./scripts/launch_shadeform.sh --phase sft+rl     # SFT then RL
 #   ./scripts/launch_shadeform.sh --phase all        # Full pipeline: mid→sft→rl
 #   ./scripts/launch_shadeform.sh --gpu B200         # Specific GPU type
@@ -104,7 +105,7 @@ while [[ $# -gt 0 ]]; do
             echo "Unknown option: $1"
             echo ""
             echo "Usage: $0 [OPTIONS]"
-            echo "  --phase PHASE     Training phase: mid, sft, rl, mid+sft, sft+rl, all (default: sft)"
+            echo "  --phase PHASE     Training phase: mid, sft, rl, agent_rl, mid+sft, sft+rl, all (default: sft)"
             echo "  --run-name NAME   Training run name (default: lanbot-v3)"
             echo "  --gpu TYPE        GPU type to search for (default: B200)"
             echo "  --num-gpus N      Number of GPUs (default: 8)"
@@ -121,10 +122,10 @@ done
 
 # Validate training phase
 case "$TRAINING_PHASE" in
-    mid|sft|rl|mid+sft|sft+rl|all) ;;
+    mid|sft|rl|agent_rl|mid+sft|sft+rl|all) ;;
     *)
         echo "ERROR: Invalid training phase: $TRAINING_PHASE"
-        echo "Valid phases: mid, sft, rl, mid+sft, sft+rl, all"
+        echo "Valid phases: mid, sft, rl, agent_rl, mid+sft, sft+rl, all"
         exit 1
         ;;
 esac

@@ -14,7 +14,7 @@ This document outlines the path from nanochat fork to a custom agentic LLM. Nano
 
 ## Progress Tracking
 
-### Current Status: Phase 2 — Personality Injection ✅ COMPLETE
+### Current Status: Phase 3 — Skill Training (In Progress)
 
 **Completed:**
 - [x] **Phase 1: Full pipeline run on 8×H100** (see `my-checkpoints/report.md`)
@@ -49,11 +49,14 @@ This document outlines the path from nanochat fork to a custom agentic LLM. Nano
 - [x] **Evaluated personality retention** ✅
   - Model correctly identifies as "LanBot, created by Gene Kobilansky in 2025"
   - Knows its purpose: "help answer questions, do math, and assist with coding"
-  - Note: Can't actually execute tasks yet (needs SFT + RL)
+- [x] **Run SFT (Supervised Fine-Tuning)** ✅
+  - Checkpoint: `chatsft_checkpoints/d20/model_000089.pt` on HuggingFace
+  - Teaches task completion patterns
 
 **Next Steps:**
-- [ ] Run SFT (Supervised Fine-Tuning) - teaches task completion
-- [ ] Run RL (Reinforcement Learning) - reinforces math/tool use
+- [ ] Run Agent RL (Reinforcement Learning) - multi-task training with enhanced rewards
+  - Uses `scripts/agent_rl.py` (70% GSM8K math + 30% HumanEval coding)
+  - Enhanced reward functions encourage agent-like behavior
 - [ ] Build agent harness around the model
 
 **Shadeform Scripts:**
@@ -351,7 +354,77 @@ identity = ModelIdentity(
 
 ---
 
-## Phase 3: Skill Training — Structured Reasoning
+## Phase 3A: Enhanced Agent RL Training (NEW)
+
+**Goal:** Train the model with agent-focused objectives beyond just task correctness.
+
+### Multi-Task RL with Enhanced Rewards
+
+Created `scripts/agent_rl.py` which improves upon the basic `chat_rl.py` by:
+
+1. **Multi-task training mixture:**
+   - 70% GSM8K (math with calculator tool use)
+   - 30% HumanEval (code generation)
+   - Configurable via `--gsm8k_weight` and `--humaneval_weight`
+
+2. **Enhanced reward signals for GSM8K:**
+   ```python
+   Base reward:     1.0 for correct answer
+   Tool use bonus:  +0.2 for using <<...>> calculator
+   Format bonus:    +0.1 for showing #### final answer
+   Verbosity penalty: -0.1 if >400 tokens
+   ```
+
+3. **Enhanced reward signals for HumanEval:**
+   ```python
+   Syntax valid:    +0.3 (compiles without errors)
+   Has function:    +0.2 (contains def statement)
+   Tests pass:      +1.0 (all tests succeed)
+   Verbosity penalty: -0.1 if >500 tokens
+   ```
+
+### Why This Matters for Agents
+
+- **Tool use accuracy**: Partial credit for attempting tool calls, even if answer wrong
+- **Code quality**: Rewards syntactically valid code, not just test-passing code
+- **Conciseness**: Penalizes overly verbose responses
+- **Format adherence**: Encourages structured output patterns
+
+### Running Agent RL
+
+**Local (single GPU):**
+```bash
+python -m scripts.agent_rl --run=agent_test
+
+# Adjust task mixture
+python -m scripts.agent_rl --gsm8k_weight=0.5 --humaneval_weight=0.5
+```
+
+**Cloud (Shadeform with auto-delete):**
+```bash
+# Launch agent RL training (recommended)
+./scripts/launch_shadeform.sh --phase agent_rl
+
+# Or traditional RL (GSM8K only)
+./scripts/launch_shadeform.sh --phase rl
+
+# Monitor progress
+./scripts/check_training_status.sh --watch
+```
+
+The `agent_rl` phase:
+- Downloads SFT checkpoint from HuggingFace
+- Runs multi-task RL (70% GSM8K, 30% HumanEval)
+- Uploads results to HuggingFace: `agentrl_checkpoints/`
+- Self-destructs instance when done
+
+### Next: Traditional Skill Training
+
+After Agent RL completes, you can optionally run traditional skill training approaches...
+
+---
+
+## Phase 3B: Skill Training — Structured Reasoning (Optional)
 
 **Goal:** Teach your model to break down problems step-by-step.
 

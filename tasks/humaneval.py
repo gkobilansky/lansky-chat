@@ -95,3 +95,41 @@ class HumanEval(Task):
         result = execute_code(program)
         success = result.success
         return success
+
+    def reward(self, conversation, completion):
+        """
+        Enhanced reward function for agent training.
+        Provides partial credit for code quality even if tests fail.
+        """
+        reward = 0.0
+
+        # Extract code from completion
+        code = extract_program(completion)
+
+        # Partial credit: Syntactically valid Python (+0.3)
+        try:
+            compile(code, '<string>', 'exec')
+            reward += 0.3
+        except SyntaxError:
+            # Syntax errors get no further credit
+            return reward
+
+        # Partial credit: Contains function definition (+0.2)
+        if 'def ' in code:
+            reward += 0.2
+
+        # Full credit: Tests pass (+1.0)
+        try:
+            success = self.evaluate(conversation, completion)
+            if success:
+                reward += 1.0
+        except Exception:
+            # Code runs but fails tests - still got partial credit above
+            pass
+
+        # Penalty: Too verbose (>500 tokens)
+        token_count = len(completion.split())
+        if token_count > 500:
+            reward -= 0.1
+
+        return reward

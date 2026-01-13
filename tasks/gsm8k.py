@@ -109,9 +109,28 @@ class GSM8K(Task):
 
     def reward(self, conversation, assistant_response):
         """
-        Used during RL. To keep things simple, just re-use the evaluation above.
-        Later this could be made more complex (e.g. format matching etc.)
+        Enhanced reward function for agent training.
+        Provides partial credit for proper tool use and formatting.
         """
+        # Base reward: correctness (0.0 or 1.0)
         is_correct = self.evaluate(conversation, assistant_response)
-        is_correct_float = float(is_correct)
-        return is_correct_float
+        reward = float(is_correct)
+
+        # Bonus: Proper tool use format (+0.2 if uses <<...>> correctly)
+        # This encourages the model to use the calculator tool
+        tool_calls = re.findall(r'<<[^>]+>>', assistant_response)
+        if tool_calls:
+            reward += 0.2
+
+        # Bonus: Shows final answer with marker (+0.1)
+        # Encourages structured output format
+        if '####' in assistant_response:
+            reward += 0.1
+
+        # Penalty: Too verbose (-0.1 if >400 tokens)
+        # Encourages concise, focused responses
+        token_count = len(assistant_response.split())
+        if token_count > 400:
+            reward -= 0.1
+
+        return reward

@@ -95,12 +95,35 @@ def save_ssh_key(instance_name, private_key):
 # Filter for lanbot instances
 lanbot_instances = [i for i in instances if 'lanbot' in i.get('name', '').lower()]
 
+# Extract phase from instance name for checkpoint checking
+def get_checkpoint_dir(instance_name):
+    """Determine checkpoint directory based on instance name"""
+    name_lower = instance_name.lower()
+    if 'agent_rl' in name_lower or 'agent-rl' in name_lower:
+        return 'agentrl_checkpoints'
+    elif 'sft+rl' in name_lower:
+        return 'chatrl_checkpoints'  # Final phase
+    elif 'mid+sft' in name_lower:
+        return 'chatsft_checkpoints'  # Final phase
+    elif 'rl' in name_lower:
+        return 'chatrl_checkpoints'
+    elif 'sft' in name_lower:
+        return 'chatsft_checkpoints'
+    elif 'mid' in name_lower:
+        return 'mid_checkpoints'
+    else:
+        return 'mid_checkpoints'  # Default fallback
+
+# Get first instance's checkpoint dir if any exist
+checkpoint_dir = get_checkpoint_dir(lanbot_instances[0].get('name', '')) if lanbot_instances else 'mid_checkpoints'
+print(f"CHECKPOINT_DIR:{checkpoint_dir}")  # Signal to bash
+
 if not lanbot_instances:
     print("No active lanbot instances found.")
     print("")
     print("This means either:")
     print("  - Training hasn't started yet")
-    print("  - Training completed successfully (check mid_checkpoints/)")
+    print(f"  - Training completed successfully (check {checkpoint_dir}/)")
     print("  - Training failed (check logs/error-*.log)")
     print("  - Instance was manually deleted")
     print("")
@@ -155,8 +178,14 @@ else:
 PYEOF
     )"
 
-    # Display Python output (filter out internal signal)
-    echo "$INSTANCE_OUTPUT" | grep -v "CHECKING_HF_LOGS"
+    # Extract checkpoint directory from Python output
+    CHECKPOINT_DIR=$(echo "$INSTANCE_OUTPUT" | grep "^CHECKPOINT_DIR:" | cut -d: -f2)
+    if [ -z "$CHECKPOINT_DIR" ]; then
+        CHECKPOINT_DIR="mid_checkpoints"  # Fallback
+    fi
+
+    # Display Python output (filter out internal signals)
+    echo "$INSTANCE_OUTPUT" | grep -v "CHECKING_HF_LOGS" | grep -v "^CHECKPOINT_DIR:"
 
     # Check if we need to look for error logs (no active instances)
     if echo "$INSTANCE_OUTPUT" | grep -q "CHECKING_HF_LOGS"; then
@@ -183,10 +212,10 @@ PYEOF
                     echo "  (Also found error log from earlier attempt: $ERROR_LOG)"
                 fi
                 echo ""
-                if echo "$HF_ROOT" | grep -q "mid_checkpoints"; then
-                    echo "✓ mid_checkpoints/: FOUND - Training completed successfully!"
+                if echo "$HF_ROOT" | grep -q "$CHECKPOINT_DIR"; then
+                    echo "✓ $CHECKPOINT_DIR/: FOUND - Training completed successfully!"
                 else
-                    echo "  mid_checkpoints/: not yet uploaded"
+                    echo "  $CHECKPOINT_DIR/: not yet uploaded"
                 fi
             elif [ -n "$ERROR_LOG" ]; then
                 # Only error log, no success - training failed
@@ -221,10 +250,10 @@ PYEOF
         if [ -z "$HF_FILES" ]; then
             echo "  (Could not list HF repo - check manually at https://huggingface.co/$HF_REPO)"
         else
-            if echo "$HF_FILES" | grep -q "mid_checkpoints"; then
-                echo "  mid_checkpoints/: FOUND"
+            if echo "$HF_FILES" | grep -q "$CHECKPOINT_DIR"; then
+                echo "  $CHECKPOINT_DIR/: FOUND"
             else
-                echo "  mid_checkpoints/: not yet"
+                echo "  $CHECKPOINT_DIR/: not yet"
             fi
 
             if echo "$HF_FILES" | grep -q "logs/"; then
