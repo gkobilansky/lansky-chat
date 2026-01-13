@@ -95,28 +95,24 @@ def save_ssh_key(instance_name, private_key):
 # Filter for lanbot instances
 lanbot_instances = [i for i in instances if 'lanbot' in i.get('name', '').lower()]
 
-# Extract phase from instance name for checkpoint checking
-def get_checkpoint_dir(instance_name):
-    """Determine checkpoint directory based on instance name"""
-    name_lower = instance_name.lower()
+# Determine checkpoint directory from instance name
+checkpoint_dir = 'mid_checkpoints'  # default
+if lanbot_instances:
+    name_lower = lanbot_instances[0].get('name', '').lower()
     if 'agent_rl' in name_lower or 'agent-rl' in name_lower:
-        return 'agentrl_checkpoints'
+        checkpoint_dir = 'agentrl_checkpoints'
     elif 'sft+rl' in name_lower:
-        return 'chatrl_checkpoints'  # Final phase
+        checkpoint_dir = 'chatrl_checkpoints'
     elif 'mid+sft' in name_lower:
-        return 'chatsft_checkpoints'  # Final phase
+        checkpoint_dir = 'chatsft_checkpoints'
     elif 'rl' in name_lower:
-        return 'chatrl_checkpoints'
+        checkpoint_dir = 'chatrl_checkpoints'
     elif 'sft' in name_lower:
-        return 'chatsft_checkpoints'
+        checkpoint_dir = 'chatsft_checkpoints'
     elif 'mid' in name_lower:
-        return 'mid_checkpoints'
-    else:
-        return 'mid_checkpoints'  # Default fallback
+        checkpoint_dir = 'mid_checkpoints'
 
-# Get first instance's checkpoint dir if any exist
-checkpoint_dir = get_checkpoint_dir(lanbot_instances[0].get('name', '')) if lanbot_instances else 'mid_checkpoints'
-print(f"CHECKPOINT_DIR:{checkpoint_dir}")  # Signal to bash
+print(f"CHECKPOINT_DIR:{checkpoint_dir}")
 
 if not lanbot_instances:
     print("No active lanbot instances found.")
