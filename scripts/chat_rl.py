@@ -93,13 +93,16 @@ def get_batch():
         model.eval() # ensure the model is in eval mode
         generated_token_sequences = []
         masks = []
-        num_sampling_steps = num_samples // device_batch_size # go sequentially to prevent OOMs
-        for sampling_step in range(num_sampling_steps):
+        # Handle case where num_samples < device_batch_size (e.g., on larger GPUs)
+        samples_remaining = num_samples
+        sampling_step = 0
+        while samples_remaining > 0:
+            batch_size = min(samples_remaining, device_batch_size)
             seed = hash((step, example_idx, sampling_step)) & 0x7FFFFFFF # positive half of int32
             with autocast_ctx:
                 generated_token_sequences_batch, masks_batch = engine.generate_batch(
                     tokens,
-                    num_samples=device_batch_size,
+                    num_samples=batch_size,
                     max_tokens=max_new_tokens,
                     temperature=temperature,
                     top_k=top_k,
@@ -107,6 +110,8 @@ def get_batch():
                 )
             generated_token_sequences.extend(generated_token_sequences_batch)
             masks.extend(masks_batch)
+            samples_remaining -= batch_size
+            sampling_step += 1
 
         # Calculate the rewards for each sample
         rewards = []
