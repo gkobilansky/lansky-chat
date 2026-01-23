@@ -19,9 +19,9 @@ if [ -f "$REPO_ROOT/.env" ]; then
     set +a
 fi
 
-# Config
+# Config (override via .env)
 SHADEFORM_API="https://api.shadeform.ai/v1"
-HF_REPO="gkobilansky/lanbot-checkpoints"
+HF_REPO="${HF_REPO:-gkobilansky/lanbot-checkpoints}"
 SSH_KEYS_DIR="$REPO_ROOT/.ssh_keys"
 
 # Create SSH keys directory if needed

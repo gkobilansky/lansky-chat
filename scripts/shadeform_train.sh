@@ -11,16 +11,21 @@
 #
 set -e
 
+# Load .env if present (for local testing)
+if [ -f .env ]; then
+    export $(grep -v '^#' .env | xargs)
+fi
+
 # ============================================================================
-# CONFIGURATION - Edit these before running
+# CONFIGURATION - Override via .env or environment variables
 # ============================================================================
 
 # HuggingFace Hub settings (recommended for checkpoint storage)
-HF_REPO="gkobilansky/lanbot-checkpoints"  # Your HF repo for checkpoints
-HF_TOKEN="${HF_TOKEN:-}"                   # Set via Shadeform envs or here
+HF_REPO="${HF_REPO:-gkobilansky/lanbot-checkpoints}"
+HF_TOKEN="${HF_TOKEN:-}"
 
 # GitHub repo
-GITHUB_REPO="https://github.com/gkobilansky/lansky-chat.git"
+GITHUB_REPO="${GITHUB_REPO:-https://github.com/gkobilansky/lansky-chat.git}"
 GITHUB_BRANCH="master"
 
 # Training settings

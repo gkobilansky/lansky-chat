@@ -4,7 +4,19 @@
 
 set -e
 
+# Load config from .env if exists
+if [ -f .env ]; then
+    export $(grep -v '^#' .env | xargs)
+fi
+
+# Defaults (override in .env)
+HF_REPO="${HF_REPO:-gkobilansky/lanbot-checkpoints}"
+MODEL_SOURCE="${MODEL_SOURCE:-mid}"
+GITHUB_REPO="${GITHUB_REPO:-https://github.com/gkobilansky/lansky-chat.git}"
+
 echo "=== LanBot VPS Setup ==="
+echo "HF_REPO: $HF_REPO"
+echo "MODEL_SOURCE: $MODEL_SOURCE"
 
 # Install system dependencies
 sudo apt update
@@ -16,9 +28,14 @@ source ~/.cargo/env
 
 # Clone repo (or pull if exists)
 if [ ! -d "lansky-chat" ]; then
-    git clone https://github.com/gkobilansky/lansky-chat.git
+    git clone "$GITHUB_REPO"
 fi
 cd lansky-chat
+
+# Copy .env if provided
+if [ -f ../.env ]; then
+    cp ../.env .
+fi
 
 # Create venv and install dependencies (CPU-only for VPS)
 uv venv
@@ -29,11 +46,13 @@ uv pip install -e ".[cpu]"
 echo "Downloading model from HuggingFace..."
 pip install huggingface_hub
 python -c "
+import os
 from huggingface_hub import snapshot_download
 snapshot_download(
-    repo_id='gkobilansky/lanbot-checkpoints',
+    repo_id='${HF_REPO}',
     local_dir='checkpoints',
-    allow_patterns=['mid_checkpoints/*', 'tokenizer/*']
+    allow_patterns=['${MODEL_SOURCE}_checkpoints/*', 'tokenizer/*'],
+    token=os.environ.get('HF_TOKEN')
 )
 "
 
