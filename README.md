@@ -189,6 +189,57 @@ python -m pytest tests/test_rustbpe.py -v -s
 └── uv.lock
 ```
 
+## Deployment
+
+Once you've trained a model, you can deploy it to a VPS for permanent hosting.
+
+### Configuration
+
+Copy `.env.example` to `.env` and customize:
+
+```bash
+cp .env.example .env
+```
+
+```bash
+# .env
+HF_REPO=your-username/your-checkpoints  # HuggingFace repo
+MODEL_SOURCE=mid                         # base, mid, sft, or rl
+DOMAIN=chat.yourdomain.com
+PORT=8000
+```
+
+### Deploy to VPS
+
+On a fresh Ubuntu VPS ($6/mo DigitalOcean droplet works fine for small models):
+
+```bash
+# 1. Upload your .env, then run setup
+curl -O https://raw.githubusercontent.com/gkobilansky/lansky-chat/master/deploy/setup.sh
+bash setup.sh
+
+# 2. Install Caddy for auto-HTTPS
+sudo apt install caddy
+source .env && envsubst < lansky-chat/deploy/Caddyfile.template | sudo tee /etc/caddy/Caddyfile
+sudo systemctl reload caddy
+
+# 3. Install as systemd service
+sudo cp lansky-chat/deploy/lanbot.service /etc/systemd/system/
+sudo systemctl enable lanbot && sudo systemctl start lanbot
+```
+
+Point your DNS A record to the VPS IP, and you're live.
+
+### Files
+
+```
+deploy/
+├── setup.sh           # Installs deps, downloads model from HF
+├── lanbot.service     # Systemd service for auto-restart
+├── Caddyfile          # Example Caddy config
+└── Caddyfile.template # Template for envsubst
+```
+
 ## Contributing
 
 nanochat is nowhere near finished. The goal is to improve the state of the art in micro models that are accessible to work with end to end on budgets of < $1000 dollars. Accessibility is about overall cost but also about cognitive complexity - nanochat is not an exhaustively configurable LLM "framework"; there will be no giant configuration objects, model factories, or if-then-else monsters in the code base. It is a single, cohesive, minimal, readable, hackable, maximally-forkable "strong baseline" codebase designed to run start to end and produce a concrete ChatGPT clone and its report card.
