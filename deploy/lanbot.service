@@ -1,0 +1,15 @@
+[Unit]
+Description=LanBot Chat Server
+After=network.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/home/ubuntu/lansky-chat
+Environment="PATH=/home/ubuntu/lansky-chat/.venv/bin"
+ExecStart=/home/ubuntu/lansky-chat/.venv/bin/python -m scripts.chat_web --port 8000
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

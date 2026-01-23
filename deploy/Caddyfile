@@ -1,0 +1,8 @@
+# Caddy reverse proxy config
+# Install: sudo apt install caddy
+# Copy to: /etc/caddy/Caddyfile
+# Reload: sudo systemctl reload caddy
+
+chat.lansky.tech {
+    reverse_proxy localhost:8000
+}
