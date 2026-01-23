@@ -5,9 +5,10 @@ After=network.target
 [Service]
 Type=simple
 User=ubuntu
+# Update WorkingDirectory to match your install location
 WorkingDirectory=/home/ubuntu/lansky-chat
-Environment="PATH=/home/ubuntu/lansky-chat/.venv/bin"
-ExecStart=/home/ubuntu/lansky-chat/.venv/bin/python -m scripts.chat_web --port 8000
+EnvironmentFile=/home/ubuntu/lansky-chat/.env
+ExecStart=/home/ubuntu/lansky-chat/.venv/bin/python -m scripts.chat_web --port ${PORT:-8000}
 Restart=always
 RestartSec=10
 
