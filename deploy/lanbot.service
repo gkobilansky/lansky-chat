@@ -1,0 +1,16 @@
+[Unit]
+Description=LanBot Chat Server
+After=network.target
+
+[Service]
+Type=simple
+User=ubuntu
+# Update WorkingDirectory to match your install location
+WorkingDirectory=/home/ubuntu/lansky-chat
+EnvironmentFile=/home/ubuntu/lansky-chat/.env
+ExecStart=/home/ubuntu/lansky-chat/.venv/bin/python -m scripts.chat_web --port ${PORT:-8000}
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

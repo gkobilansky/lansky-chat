@@ -1,0 +1,16 @@
+# Caddy reverse proxy config
+#
+# Setup:
+#   1. Install: sudo apt install caddy
+#   2. Edit domain below (or use envsubst with .env)
+#   3. Copy to: /etc/caddy/Caddyfile
+#   4. Reload: sudo systemctl reload caddy
+#
+# For custom domain, update the line below:
+
+chat.lansky.tech {
+    reverse_proxy localhost:8000
+}
+
+# Alternative: generate from .env
+# source .env && envsubst < deploy/Caddyfile.template > /etc/caddy/Caddyfile

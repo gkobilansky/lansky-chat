@@ -1,0 +1,6 @@
+# Generated Caddyfile - use envsubst to populate
+# source .env && envsubst < deploy/Caddyfile.template > /etc/caddy/Caddyfile
+
+${DOMAIN} {
+    reverse_proxy localhost:${PORT}
+}
